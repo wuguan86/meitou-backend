@@ -1,0 +1,7 @@
+version: '3'
+services:
+  my-backend:
+    build: .
+    ports:
+      - "8085:8085"
+    restart: always
