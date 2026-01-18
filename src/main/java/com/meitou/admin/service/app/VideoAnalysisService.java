@@ -256,6 +256,12 @@ public class VideoAnalysisService {
         if (siteId == null) {
             throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "站点信息缺失");
         }
+        if (request == null || request.getVideo() == null || request.getVideo().isEmpty()) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "视频不能为空");
+        }
+        if (request.getVideo().startsWith("blob:") || request.getVideo().startsWith("data:")) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "视频上传失败，请重新上传");
+        }
 
         // 1. Get User
         User user = userMapper.selectById(userId);

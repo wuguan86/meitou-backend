@@ -65,12 +65,28 @@ public class GenerationRecordService extends ServiceImpl<GenerationRecordMapper,
             return;
         }
 
-        if (isVideoRecord(record) && !StringUtils.hasText(record.getThumbnailUrl()) && StringUtils.hasText(record.getContentUrl())) {
-            String url = record.getContentUrl();
-            if (url.contains("aliyuncs.com") && !url.contains("?")) {
-                record.setThumbnailUrl(url + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_800,h_0,m_fast");
-            } else if ((url.contains("myqcloud.com") || url.contains("cos")) && !url.contains("?")) {
-                record.setThumbnailUrl(url + "?ci-process=snapshot&time=1&format=jpg");
+        String url = record.getContentUrl();
+        String thumb = record.getThumbnailUrl();
+
+        if (StringUtils.hasText(url)) {
+            // Check if thumbnail needs generation (null, empty, or same as content URL)
+            boolean needGenThumb = !StringUtils.hasText(thumb) || thumb.equals(url);
+            
+            if (needGenThumb) {
+                if (isVideoRecord(record)) {
+                    if (url.contains("aliyuncs.com") && !url.contains("?")) {
+                        record.setThumbnailUrl(url + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_800,h_0,m_fast");
+                    } else if ((url.contains("myqcloud.com") || url.contains("cos")) && !url.contains("?")) {
+                        record.setThumbnailUrl(url + "?ci-process=snapshot&time=1&format=jpg");
+                    }
+                } else {
+                    // Image record
+                    if (url.contains("aliyuncs.com") && !url.contains("?")) {
+                        record.setThumbnailUrl(url + "?x-oss-process=image/resize,w_300");
+                    } else if ((url.contains("myqcloud.com") || url.contains("cos")) && !url.contains("?")) {
+                        record.setThumbnailUrl(url + "?imageMogr2/thumbnail/300x");
+                    }
+                }
             }
         }
 

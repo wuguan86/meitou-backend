@@ -227,7 +227,7 @@ public class GenerationService {
             imageUrls = ossUrls;
 
             // 阶段三：完成任务（更新记录并拆分）
-            String thumbnailUrl = !imageUrls.isEmpty() ? imageUrls.get(0) : null;
+            String thumbnailUrl = !imageUrls.isEmpty() ? generateThumbnailUrl(imageUrls.get(0), "image") : null;
             completeAndSplitGenerationTask(record.getId(), imageUrls, thumbnailUrl);
 
             // 构建响应
@@ -287,6 +287,19 @@ public class GenerationService {
         // 计算消耗
         Integer cost = calculateCost(platform, request.getModel(), request.getResolution(), null, request.getQuantity(),
                 "img2img");
+
+        // 处理Base64图片
+        if (request.getUrls() != null && !request.getUrls().isEmpty()) {
+            try {
+                List<String> processedUrls = new ArrayList<>();
+                for (String url : request.getUrls()) {
+                    processedUrls.add(aliyunOssService.uploadBase64(url, "images/"));
+                }
+                request.setUrls(processedUrls);
+            } catch (Exception e) {
+                throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "图片上传失败，请重新上传");
+            }
+        }
 
         // 阶段一：开启任务（扣费+记录）
         GenerationRecord record = startGenerationTask(userId, user.getUsername(), "img2img", "image",
@@ -422,6 +435,21 @@ public class GenerationService {
         Integer cost = calculateCost(platform, request.getModel(), request.getResolution(), request.getDuration(), 1,
                 "txt2video");
 
+        // 处理Base64图片
+        try {
+            request.setFirstFrameUrl(aliyunOssService.uploadBase64(request.getFirstFrameUrl(), "images/"));
+            request.setLastFrameUrl(aliyunOssService.uploadBase64(request.getLastFrameUrl(), "images/"));
+            if (request.getUrls() != null && !request.getUrls().isEmpty()) {
+                List<String> processedUrls = new ArrayList<>();
+                for (String url : request.getUrls()) {
+                    processedUrls.add(aliyunOssService.uploadBase64(url, "images/"));
+                }
+                request.setUrls(processedUrls);
+            }
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "图片上传失败，请重新上传");
+        }
+
         // 阶段一：开启任务（扣费+记录）
         GenerationRecord record = startGenerationTask(userId, user.getUsername(), "txt2video", "video",
                 request.getModel(), request.getPrompt(), cost, request);
@@ -502,10 +530,7 @@ public class GenerationService {
 
             // 阶段三：完成任务（更新记录）
             // 假设使用了阿里云OSS，可以直接添加截帧参数作为缩略图
-            String thumbnailUrl = null;
-            if (ossUrl.contains("aliyuncs.com")) {
-                thumbnailUrl = ossUrl + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_800,h_0,m_fast";
-            }
+            String thumbnailUrl = generateThumbnailUrl(ossUrl, "video");
             completeGenerationTask(record.getId(), ossUrl, thumbnailUrl, pid, failureReason);
 
             VideoGenerationResponse response = new VideoGenerationResponse();
@@ -559,6 +584,22 @@ public class GenerationService {
         // 计算消耗
         Integer cost = calculateCost(platform, request.getModel(), request.getResolution(), request.getDuration(), 1,
                 "img2video");
+
+        // 处理Base64图片
+        try {
+            request.setImage(aliyunOssService.uploadBase64(request.getImage(), "images/"));
+            request.setFirstFrameUrl(aliyunOssService.uploadBase64(request.getFirstFrameUrl(), "images/"));
+            request.setLastFrameUrl(aliyunOssService.uploadBase64(request.getLastFrameUrl(), "images/"));
+            if (request.getUrls() != null && !request.getUrls().isEmpty()) {
+                List<String> processedUrls = new ArrayList<>();
+                for (String url : request.getUrls()) {
+                    processedUrls.add(aliyunOssService.uploadBase64(url, "images/"));
+                }
+                request.setUrls(processedUrls);
+            }
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "图片上传失败，请重新上传");
+        }
 
         // 阶段一：开启任务（扣费+记录）
         GenerationRecord record = startGenerationTask(userId, user.getUsername(), "img2video", "video",
@@ -643,8 +684,8 @@ public class GenerationService {
             String thumbnailUrl = null;
             if (request.getImage() != null) {
                 thumbnailUrl = request.getImage();
-            } else if (ossUrl.contains("aliyuncs.com")) {
-                thumbnailUrl = ossUrl + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_800,h_0,m_fast";
+            } else {
+                thumbnailUrl = generateThumbnailUrl(ossUrl, "video");
             }
             completeGenerationTask(record.getId(), ossUrl, thumbnailUrl, pid, failureReason);
 
@@ -704,14 +745,21 @@ public class GenerationService {
         // 处理签名URL
         if (result.getRecords() != null) {
             result.getRecords().forEach(record -> {
-                // 修复视频缺少缩略图的问题
-                if (("video".equals(record.getFileType()) || "video".equals(record.getType())
-                        || "txt2video".equals(record.getType()) || "img2video".equals(record.getType()))
-                        && (record.getThumbnailUrl() == null || record.getThumbnailUrl().isEmpty())) {
-                    String url = record.getContentUrl();
-                    if (url != null && url.contains("aliyuncs.com") && !url.contains("?")) {
-                        // 阿里云OSS视频截帧参数
-                        record.setThumbnailUrl(url + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_800,h_0,m_fast");
+                // 修复缺少缩略图或缩略图与原图相同的问题
+                String fileType = record.getFileType();
+                // 兼容旧数据
+                if (fileType == null) {
+                    if ("txt2video".equals(record.getType()) || "img2video".equals(record.getType()) || "video".equals(record.getType())) {
+                        fileType = "video";
+                    } else {
+                        fileType = "image";
+                    }
+                }
+
+                if (record.getThumbnailUrl() == null || record.getThumbnailUrl().isEmpty() || record.getThumbnailUrl().equals(record.getContentUrl())) {
+                    String newThumb = generateThumbnailUrl(record.getContentUrl(), fileType);
+                    if (newThumb != null && !newThumb.equals(record.getContentUrl())) {
+                        record.setThumbnailUrl(newThumb);
                     }
                 }
 
@@ -737,6 +785,24 @@ public class GenerationService {
         }
         if (!record.getUserId().equals(userId)) {
             throw new BusinessException(ErrorCode.PERMISSION_DENIED.getCode(), "无权查看此记录");
+        }
+
+        // 修复缺少缩略图或缩略图与原图相同的问题
+        String fileType = record.getFileType();
+        // 兼容旧数据
+        if (fileType == null) {
+            if ("txt2video".equals(record.getType()) || "img2video".equals(record.getType()) || "video".equals(record.getType())) {
+                fileType = "video";
+            } else {
+                fileType = "image";
+            }
+        }
+
+        if (record.getThumbnailUrl() == null || record.getThumbnailUrl().isEmpty() || record.getThumbnailUrl().equals(record.getContentUrl())) {
+            String newThumb = generateThumbnailUrl(record.getContentUrl(), fileType);
+            if (newThumb != null && !newThumb.equals(record.getContentUrl())) {
+                record.setThumbnailUrl(newThumb);
+            }
         }
 
         // 处理签名URL
@@ -1074,6 +1140,42 @@ public class GenerationService {
     }
 
     /**
+     * 生成缩略图URL
+     * 
+     * @param contentUrl 内容URL
+     * @param fileType 文件类型：image-图片，video-视频
+     * @return 缩略图URL
+     */
+    private String generateThumbnailUrl(String contentUrl, String fileType) {
+        if (contentUrl == null || contentUrl.isEmpty()) {
+            return null;
+        }
+        
+        // 如果已经是带参数的URL，就不再处理
+        if (contentUrl.contains("?x-oss-process=") || contentUrl.contains("?ci-process=")) {
+            return contentUrl;
+        }
+
+        if (contentUrl.contains("aliyuncs.com")) {
+            if ("video".equals(fileType)) {
+                return contentUrl + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_800,h_0,m_fast";
+            } else {
+                // 图片缩略图，宽300
+                return contentUrl + "?x-oss-process=image/resize,w_300";
+            }
+        } else if (contentUrl.contains("myqcloud.com") || contentUrl.contains("cos")) {
+            if ("video".equals(fileType)) {
+                return contentUrl + "?ci-process=snapshot&time=1&format=jpg";
+            } else {
+                // 腾讯云图片缩略图
+                return contentUrl + "?imageMogr2/thumbnail/300x";
+            }
+        }
+        
+        return contentUrl;
+    }
+
+    /**
      * 开启生成任务（事务：扣费+记录+流水）
      */
     private GenerationRecord startGenerationTask(Long userId, String username, String type, String fileType,
@@ -1156,12 +1258,17 @@ public class GenerationService {
                 return null;
             }
 
+            String effectiveThumbnailUrl = firstThumbnailUrl;
+            if (effectiveThumbnailUrl == null && !contentUrls.isEmpty()) {
+                effectiveThumbnailUrl = generateThumbnailUrl(contentUrls.get(0), originalRecord.getFileType());
+            }
+
             UpdateWrapper<GenerationRecord> updateOriginal = new UpdateWrapper<>();
             updateOriginal.eq("id", recordId);
             updateOriginal.eq("status", "processing");
             updateOriginal.set("status", "success");
             updateOriginal.set("content_url", contentUrls.get(0));
-            updateOriginal.set("thumbnail_url", firstThumbnailUrl != null ? firstThumbnailUrl : contentUrls.get(0));
+            updateOriginal.set("thumbnail_url", effectiveThumbnailUrl);
             updateOriginal.set("updated_at", LocalDateTime.now());
 
             int updatedRows = generationRecordMapper.update(null, updateOriginal);
@@ -1185,7 +1292,7 @@ public class GenerationService {
                 newRecord.setCost(0);
                 newRecord.setStatus("success");
                 newRecord.setContentUrl(url);
-                newRecord.setThumbnailUrl(url);
+                newRecord.setThumbnailUrl(generateThumbnailUrl(url, originalRecord.getFileType()));
 
                 generationRecordMapper.insert(newRecord);
             }
@@ -1383,12 +1490,18 @@ public class GenerationService {
                         }
 
                         if (responseBody == null) {
+                            // Update Analysis Record (Failed)
+                            analysisRecord.setStatus(2);
+                            analysisRecord.setErrorMsg("Response body is null");
+                            analysisRecordMapper.updateById(analysisRecord);
+                            
                             emitter.complete();
                             return;
                         }
 
                         // Stream the response
                         okio.BufferedSource source = responseBody.source();
+                        boolean isSuccess = false;
                         while (!source.exhausted()) {
                             String line = source.readUtf8Line();
                             if (line != null && !line.isEmpty()) {
@@ -1399,7 +1512,7 @@ public class GenerationService {
                                         analysisRecord.setStatus(1);
                                         analysisRecord.setResult(fullResponse.toString());
                                         analysisRecordMapper.updateById(analysisRecord);
-
+                                        isSuccess = true;
                                         continue;
                                     }
                                     fullResponse.append(data);
@@ -1407,6 +1520,19 @@ public class GenerationService {
                                 }
                             }
                         }
+                        
+                        // If finished without [DONE] but gathered data, mark as success
+                        if (!isSuccess && fullResponse.length() > 0) {
+                             analysisRecord.setStatus(1);
+                             analysisRecord.setResult(fullResponse.toString());
+                             analysisRecordMapper.updateById(analysisRecord);
+                        } else if (!isSuccess) {
+                            // No data received and no [DONE], mark as failed
+                            analysisRecord.setStatus(2);
+                            analysisRecord.setErrorMsg("No data received from API");
+                            analysisRecordMapper.updateById(analysisRecord);
+                        }
+
                         emitter.complete();
                     } catch (Exception e) {
                         // Update Analysis Record (Failed)
@@ -2332,13 +2458,29 @@ public class GenerationService {
                             if ("SUCCESS".equalsIgnoreCase(status) || "SUCCEEDED".equalsIgnoreCase(status)) {
                                 if (record.getType() != null && record.getType().contains("video")) {
                                     String videoUrl = parseVideoUrl(statusJson);
+                                    if (videoUrl == null || videoUrl.isEmpty()) {
+                                        failGenerationTask(record, "视频URL为空");
+                                        response.setStatus("failed");
+                                        response.setErrorMessage("视频生成结果无效");
+                                        return response;
+                                    }
                                     String ossUrl;
                                     if (videoUrl.contains("aliyuncs.com") || videoUrl.contains("myqcloud.com")) {
                                         ossUrl = videoUrl;
                                     } else {
                                         try {
+                                            if (videoUrl.startsWith("data:")
+                                                    || videoUrl.startsWith("blob:")) {
+                                                throw new RuntimeException("视频URL无效");
+                                            }
                                             ossUrl = aliyunOssService.uploadFromUrl(videoUrl, "videos/");
                                         } catch (Exception e) {
+                                            if (videoUrl != null && (videoUrl.startsWith("data:") || videoUrl.startsWith("blob:"))) {
+                                                failGenerationTask(record, "视频上传失败，请重新上传");
+                                                response.setStatus("failed");
+                                                response.setErrorMessage("视频上传失败，请重新上传");
+                                                return response;
+                                            }
                                             ossUrl = videoUrl;
                                             log.warn("视频上传OSS失败: {}", e.getMessage());
                                         }
@@ -2365,13 +2507,32 @@ public class GenerationService {
                                     if (!imageUrls.isEmpty()) {
                                         List<String> ossUrls = new ArrayList<>();
                                         for (String url : imageUrls) {
-                                            if (url.contains("aliyuncs.com") || url.contains("myqcloud.com")) {
+                                            if (url != null && (url.contains("aliyuncs.com") || url.contains("myqcloud.com"))) {
                                                 ossUrls.add(url);
                                             } else {
                                                 try {
-                                                    String ossUrl = aliyunOssService.uploadFromUrl(url, "images/");
-                                                    ossUrls.add(ossUrl);
+                                                    if (url == null || url.isEmpty() || url.startsWith("blob:")) {
+                                                        throw new RuntimeException("图片URL无效");
+                                                    }
+                                                    if (url.startsWith("data:")) {
+                                                        ossUrls.add(aliyunOssService.uploadBase64(url, "images/"));
+                                                    } else {
+                                                        String ossUrl = aliyunOssService.uploadFromUrl(url, "images/");
+                                                        ossUrls.add(ossUrl);
+                                                    }
                                                 } catch (Exception e) {
+                                                    if (url != null && url.startsWith("data:")) {
+                                                        failGenerationTask(record, "图片上传失败，请重新上传");
+                                                        response.setStatus("failed");
+                                                        response.setErrorMessage("图片上传失败，请重新上传");
+                                                        return response;
+                                                    }
+                                                    if (url == null || url.isEmpty() || url.startsWith("blob:")) {
+                                                        failGenerationTask(record, "图片URL无效");
+                                                        response.setStatus("failed");
+                                                        response.setErrorMessage("图片生成结果无效");
+                                                        return response;
+                                                    }
                                                     ossUrls.add(url);
                                                 }
                                             }

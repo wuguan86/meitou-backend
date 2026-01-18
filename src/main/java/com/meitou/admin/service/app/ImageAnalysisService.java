@@ -14,6 +14,7 @@ import com.meitou.admin.mapper.AnalysisRecordMapper;
 import com.meitou.admin.mapper.UserMapper;
 import com.meitou.admin.mapper.UserTransactionMapper;
 import com.meitou.admin.service.admin.ApiPlatformService;
+import com.meitou.admin.service.common.AliyunOssService;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
@@ -35,6 +36,7 @@ public class ImageAnalysisService {
     private final UserTransactionMapper userTransactionMapper;
     private final AnalysisRecordMapper analysisRecordMapper;
     private final TransactionTemplate transactionTemplate;
+    private final AliyunOssService aliyunOssService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final OkHttpClient okHttpClient = new OkHttpClient.Builder()
@@ -173,11 +175,13 @@ public class ImageAnalysisService {
                                 UserMapper userMapper,
                                 UserTransactionMapper userTransactionMapper,
                                 AnalysisRecordMapper analysisRecordMapper,
+                                AliyunOssService aliyunOssService,
                                 TransactionTemplate transactionTemplate) {
         this.apiPlatformService = apiPlatformService;
         this.userMapper = userMapper;
         this.userTransactionMapper = userTransactionMapper;
         this.analysisRecordMapper = analysisRecordMapper;
+        this.aliyunOssService = aliyunOssService;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -255,6 +259,19 @@ public class ImageAnalysisService {
         Long siteId = SiteContext.getSiteId();
         if (siteId == null) {
             throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "站点信息缺失");
+        }
+        if (request == null || request.getImage() == null || request.getImage().isEmpty()) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "图片不能为空");
+        }
+        if (request.getImage().startsWith("blob:")) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "图片上传失败，请重新上传");
+        }
+        if (request.getImage().startsWith("data:")) {
+            try {
+                request.setImage(aliyunOssService.uploadBase64(request.getImage(), "app/images/"));
+            } catch (Exception e) {
+                throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "图片上传失败，请重新上传");
+            }
         }
 
         // 1. Get User

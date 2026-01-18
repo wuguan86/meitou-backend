@@ -39,6 +39,35 @@ public class PublishedContentService extends ServiceImpl<PublishedContentMapper,
     private final FileStorageService fileStorageService;
     private final GenerationRecordMapper generationRecordMapper;
     
+    private String generateThumbnailUrl(String contentUrl, String fileType) {
+        if (contentUrl == null || contentUrl.isEmpty()) {
+            return null;
+        }
+        
+        // 如果已经是带参数的URL，就不再处理
+        if (contentUrl.contains("?x-oss-process=") || contentUrl.contains("?ci-process=") || contentUrl.contains("?imageMogr2")) {
+            return contentUrl;
+        }
+
+        if (contentUrl.contains("aliyuncs.com")) {
+            if ("video".equals(fileType)) {
+                return contentUrl + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_800,h_0,m_fast";
+            } else {
+                // 图片缩略图，宽300
+                return contentUrl + "?x-oss-process=image/resize,w_300";
+            }
+        } else if (contentUrl.contains("myqcloud.com") || contentUrl.contains("cos")) {
+            if ("video".equals(fileType)) {
+                return contentUrl + "?ci-process=snapshot&time=1&format=jpg";
+            } else {
+                // 腾讯云图片缩略图
+                return contentUrl + "?imageMogr2/thumbnail/300x";
+            }
+        }
+        
+        return contentUrl;
+    }
+
     /**
      * 发布内容
      * 
@@ -92,18 +121,11 @@ public class PublishedContentService extends ServiceImpl<PublishedContentMapper,
         content.setDescription(description);
         content.setContentUrl(contentUrl);
         
-        // 处理缩略图逻辑：如果是视频且缩略图为空或与内容URL相同，尝试自动生成
-        if ("video".equals(type) && (thumbnail == null || thumbnail.isEmpty() || thumbnail.equals(contentUrl))) {
-            if (contentUrl != null) {
-                if (contentUrl.contains("aliyuncs.com")) {
-                    content.setThumbnail(contentUrl + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_800,h_0,m_fast");
-                } else if (contentUrl.contains("myqcloud.com") || contentUrl.contains("cos")) {
-                    // 腾讯云COS视频截帧
-                    content.setThumbnail(contentUrl + "?ci-process=snapshot&time=1&format=jpg");
-                } else {
-                    content.setThumbnail(thumbnail);
-                }
-            } else {
+        // 处理缩略图逻辑：如果缩略图为空或与内容URL相同，尝试自动生成
+        if (thumbnail == null || thumbnail.isEmpty() || thumbnail.equals(contentUrl)) {
+            content.setThumbnail(generateThumbnailUrl(contentUrl, type));
+            // 如果生成的缩略图还是和contentUrl一样（非OSS链接），且有传入thumbnail，则使用传入的thumbnail
+            if (content.getThumbnail() != null && content.getThumbnail().equals(contentUrl) && thumbnail != null && !thumbnail.isEmpty()) {
                 content.setThumbnail(thumbnail);
             }
         } else {
@@ -172,18 +194,14 @@ public class PublishedContentService extends ServiceImpl<PublishedContentMapper,
             Set<Long> likedIds = likeService.getLikedContentIds(userId, contentIds);
             
             // 设置isLiked状态
-            result.getRecords().forEach(item -> {
+            result.getRecords().parallelStream().forEach(item -> {
                 item.setIsLiked(likedIds.contains(item.getId()));
                 
-                // 修复视频缺少缩略图的问题
-                if ("video".equals(item.getType()) && (item.getThumbnail() == null || item.getThumbnail().isEmpty())) {
-                    String url = item.getContentUrl();
-                    if (url != null) {
-                        if (url.contains("aliyuncs.com")) {
-                            item.setThumbnail(url + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_800,h_0,m_fast");
-                        } else if (url.contains("myqcloud.com") || url.contains("cos")) {
-                            item.setThumbnail(url + "?ci-process=snapshot&time=1&format=jpg");
-                        }
+                // 修复缺少缩略图或缩略图与原图相同的问题
+                if (item.getThumbnail() == null || item.getThumbnail().isEmpty() || item.getThumbnail().equals(item.getContentUrl())) {
+                    String newThumb = generateThumbnailUrl(item.getContentUrl(), item.getType());
+                    if (newThumb != null && !newThumb.equals(item.getContentUrl())) {
+                        item.setThumbnail(newThumb);
                     }
                 }
 
@@ -194,18 +212,14 @@ public class PublishedContentService extends ServiceImpl<PublishedContentMapper,
             });
         } else if (!result.getRecords().isEmpty()) {
              // 没登录，但要处理签名URL
-             result.getRecords().forEach(item -> {
+             result.getRecords().parallelStream().forEach(item -> {
                  item.setIsLiked(false);
                  
-                 // 修复视频缺少缩略图的问题
-                 if ("video".equals(item.getType()) && (item.getThumbnail() == null || item.getThumbnail().isEmpty())) {
-                     String url = item.getContentUrl();
-                     if (url != null) {
-                         if (url.contains("aliyuncs.com")) {
-                             item.setThumbnail(url + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_800,h_0,m_fast");
-                         } else if (url.contains("myqcloud.com") || url.contains("cos")) {
-                             item.setThumbnail(url + "?ci-process=snapshot&time=1&format=jpg");
-                         }
+                 // 修复缺少缩略图或缩略图与原图相同的问题
+                 if (item.getThumbnail() == null || item.getThumbnail().isEmpty() || item.getThumbnail().equals(item.getContentUrl())) {
+                     String newThumb = generateThumbnailUrl(item.getContentUrl(), item.getType());
+                     if (newThumb != null && !newThumb.equals(item.getContentUrl())) {
+                         item.setThumbnail(newThumb);
                      }
                  }
 

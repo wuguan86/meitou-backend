@@ -35,6 +35,50 @@ public class AliyunOssService {
     private final RestTemplate restTemplate;
 
     /**
+     * 上传Base64图片
+     * @param base64Data Base64字符串 (data:image/png;base64,...)
+     * @param directory 目录
+     * @return OSS URL
+     */
+    public String uploadBase64(String base64Data, String directory) {
+        if (base64Data == null || !base64Data.startsWith("data:")) {
+            return base64Data;
+        }
+
+        try {
+            int commaIndex = base64Data.indexOf(",");
+            if (commaIndex == -1) {
+                throw new IllegalArgumentException("Base64格式错误");
+            }
+
+            String header = base64Data.substring(0, commaIndex);
+            String data = base64Data.substring(commaIndex + 1);
+            if (data == null || data.isEmpty()) {
+                throw new IllegalArgumentException("Base64内容为空");
+            }
+
+            String extension = "png";
+            if (header.contains("image/jpeg") || header.contains("image/jpg")) {
+                extension = "jpg";
+            } else if (header.contains("image/png")) {
+                extension = "png";
+            } else if (header.contains("image/webp")) {
+                extension = "webp";
+            } else if (header.contains("image/gif")) {
+                extension = "gif";
+            }
+
+            byte[] bytes = java.util.Base64.getDecoder().decode(data);
+            String fileName = directory + generateFileName(extension);
+            
+            return uploadBytes(bytes, fileName);
+        } catch (Exception e) {
+            log.error("Base64上传失败", e);
+            throw new RuntimeException("Base64上传失败: " + e.getMessage());
+        }
+    }
+
+    /**
      * 上传网络图片/视频到OSS
      *
      * @param url 网络文件URL

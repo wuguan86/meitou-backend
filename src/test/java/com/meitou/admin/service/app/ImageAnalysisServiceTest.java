@@ -6,6 +6,7 @@ import com.meitou.admin.mapper.AnalysisRecordMapper;
 import com.meitou.admin.mapper.UserMapper;
 import com.meitou.admin.mapper.UserTransactionMapper;
 import com.meitou.admin.service.admin.ApiPlatformService;
+import com.meitou.admin.service.common.AliyunOssService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionCallback;
@@ -29,6 +30,7 @@ class ImageAnalysisServiceTest {
         UserTransactionMapper userTransactionMapper = mock(UserTransactionMapper.class);
         AnalysisRecordMapper analysisRecordMapper = mock(AnalysisRecordMapper.class);
         TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
+        AliyunOssService aliyunOssService = mock(AliyunOssService.class);
 
         when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
@@ -47,6 +49,7 @@ class ImageAnalysisServiceTest {
                 userMapper,
                 userTransactionMapper,
                 analysisRecordMapper,
+                aliyunOssService,
                 transactionTemplate);
 
         Method method = ImageAnalysisService.class.getDeclaredMethod(
@@ -81,6 +84,7 @@ class ImageAnalysisServiceTest {
         UserTransactionMapper userTransactionMapper = mock(UserTransactionMapper.class);
         AnalysisRecordMapper analysisRecordMapper = mock(AnalysisRecordMapper.class);
         TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
+        AliyunOssService aliyunOssService = mock(AliyunOssService.class);
 
         when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
@@ -94,6 +98,7 @@ class ImageAnalysisServiceTest {
                 userMapper,
                 userTransactionMapper,
                 analysisRecordMapper,
+                aliyunOssService,
                 transactionTemplate);
 
         Method method = ImageAnalysisService.class.getDeclaredMethod(

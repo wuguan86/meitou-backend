@@ -1,16 +1,19 @@
 package com.meitou.admin.service.app;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.meitou.admin.common.Constants;
 import com.meitou.admin.common.SiteContext;
 import com.meitou.admin.dto.app.CodeLoginRequest;
 import com.meitou.admin.dto.app.PasswordLoginRequest;
 import com.meitou.admin.dto.app.UserLoginResponse;
 import com.meitou.admin.entity.InvitationCode;
+import com.meitou.admin.entity.PublishedContent;
 import com.meitou.admin.entity.User;
 import com.meitou.admin.exception.BusinessException;
 import com.meitou.admin.exception.ErrorCode;
 import com.meitou.admin.mapper.InvitationCodeMapper;
+import com.meitou.admin.mapper.PublishedContentMapper;
 import com.meitou.admin.mapper.UserMapper;
 import com.meitou.admin.util.PasswordValidator;
 import com.meitou.admin.util.TokenUtil;
@@ -40,6 +43,7 @@ public class AuthAppService {
     
     private final UserMapper userMapper;
     private final InvitationCodeMapper invitationCodeMapper;
+    private final PublishedContentMapper publishedContentMapper;
     private final SmsCodeService smsCodeService;
     private final BCryptPasswordEncoder passwordEncoder;
     private final LoginAttemptService loginAttemptService;
@@ -413,14 +417,19 @@ public class AuthAppService {
             user.setEmail(normalizedEmail);
         }
 
+        boolean usernameUpdated = false;
         if (username != null && !username.trim().isEmpty()) {
             user.setUsername(username.trim());
+            usernameUpdated = true;
         }
         if (company != null) {
             user.setCompany(company.trim());
         }
         user.setUpdatedAt(LocalDateTime.now());
         userMapper.updateById(user);
+        if (usernameUpdated) {
+            syncPublishedContentUserSnapshot(userId, user.getUsername(), null);
+        }
 
         return getCurrentUser(userId);
     }
@@ -437,6 +446,7 @@ public class AuthAppService {
         user.setAvatarUrl(avatarUrl);
         user.setUpdatedAt(LocalDateTime.now());
         userMapper.updateById(user);
+        syncPublishedContentUserSnapshot(userId, null, avatarUrl);
     }
 
     @Transactional
@@ -476,5 +486,26 @@ public class AuthAppService {
         user.setPassword(passwordEncoder.encode(newPassword));
         user.setUpdatedAt(LocalDateTime.now());
         userMapper.updateById(user);
+    }
+
+    private void syncPublishedContentUserSnapshot(Long userId, String userName, String userAvatarUrl) {
+        if (userId == null) {
+            return;
+        }
+        boolean hasUpdate = false;
+        LambdaUpdateWrapper<PublishedContent> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(PublishedContent::getUserId, userId);
+        if (userName != null) {
+            updateWrapper.set(PublishedContent::getUserName, userName);
+            hasUpdate = true;
+        }
+        if (userAvatarUrl != null) {
+            updateWrapper.set(PublishedContent::getUserAvatarUrl, userAvatarUrl);
+            hasUpdate = true;
+        }
+        if (!hasUpdate) {
+            return;
+        }
+        publishedContentMapper.update(null, updateWrapper);
     }
 }

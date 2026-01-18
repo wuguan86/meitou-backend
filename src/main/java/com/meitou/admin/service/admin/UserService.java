@@ -1,13 +1,16 @@
 package com.meitou.admin.service.admin;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.meitou.admin.entity.PublishedContent;
 import com.meitou.admin.entity.User;
 import com.meitou.admin.entity.UserTransaction;
 import com.meitou.admin.exception.BusinessException;
 import com.meitou.admin.exception.ErrorCode;
+import com.meitou.admin.mapper.PublishedContentMapper;
 import com.meitou.admin.mapper.UserMapper;
 import com.meitou.admin.mapper.UserTransactionMapper;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +32,7 @@ public class UserService extends ServiceImpl<UserMapper, User> {
     private final UserMapper userMapper; // 用户Mapper
     private final UserTransactionMapper userTransactionMapper; // 用户流水Mapper
     private final BCryptPasswordEncoder passwordEncoder; // 密码编码器（通过依赖注入）
+    private final PublishedContentMapper publishedContentMapper;
     
     /**
      * 获取用户列表（支持站点ID和搜索，分页）
@@ -139,8 +143,11 @@ public class UserService extends ServiceImpl<UserMapper, User> {
      * @param user 用户信息
      * @return 更新后的用户
      */
+    @Transactional(rollbackFor = Exception.class)
     public User updateUser(Long id, User user) {
         User existing = getUserById(id);
+        String updatedUsername = null;
+        String updatedAvatarUrl = null;
         
         // 更新字段
         if (user.getEmail() != null) {
@@ -157,6 +164,7 @@ public class UserService extends ServiceImpl<UserMapper, User> {
         }
         if (user.getUsername() != null) {
             existing.setUsername(user.getUsername());
+            updatedUsername = user.getUsername();
         }
         if (user.getPhone() != null) {
             existing.setPhone(user.getPhone());
@@ -176,13 +184,39 @@ public class UserService extends ServiceImpl<UserMapper, User> {
         if (user.getSiteId() != null) {
             existing.setSiteId(user.getSiteId());
         }
+        if (user.getAvatarUrl() != null) {
+            existing.setAvatarUrl(user.getAvatarUrl());
+            updatedAvatarUrl = user.getAvatarUrl();
+        }
         // 密码更新（如果提供）
         if (user.getPassword() != null && !user.getPassword().isEmpty()) {
             existing.setPassword(passwordEncoder.encode(user.getPassword()));
         }
         
         userMapper.updateById(existing);
+        syncPublishedContentUserSnapshot(existing.getId(), updatedUsername, updatedAvatarUrl);
         return existing;
+    }
+
+    private void syncPublishedContentUserSnapshot(Long userId, String userName, String userAvatarUrl) {
+        if (userId == null) {
+            return;
+        }
+        boolean hasUpdate = false;
+        LambdaUpdateWrapper<PublishedContent> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(PublishedContent::getUserId, userId);
+        if (userName != null) {
+            updateWrapper.set(PublishedContent::getUserName, userName);
+            hasUpdate = true;
+        }
+        if (userAvatarUrl != null) {
+            updateWrapper.set(PublishedContent::getUserAvatarUrl, userAvatarUrl);
+            hasUpdate = true;
+        }
+        if (!hasUpdate) {
+            return;
+        }
+        publishedContentMapper.update(null, updateWrapper);
     }
     
     /**

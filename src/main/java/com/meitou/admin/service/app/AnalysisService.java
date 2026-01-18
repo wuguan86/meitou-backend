@@ -76,6 +76,12 @@ public class AnalysisService {
         if (user == null) {
             throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
+        if (request == null || request.getImage() == null || request.getImage().isEmpty()) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "图片不能为空");
+        }
+        if (request.getImage().startsWith("blob:") || request.getImage().startsWith("data:")) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "图片上传失败，请重新上传");
+        }
         
         // 根据类型查找对应的API平台（type=image_analysis）
         ApiPlatform platform = findPlatformByType("image_analysis", null);
@@ -159,6 +165,12 @@ public class AnalysisService {
         User user = userMapper.selectById(userId);
         if (user == null) {
             throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+        }
+        if (request == null || request.getVideo() == null || request.getVideo().isEmpty()) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "视频不能为空");
+        }
+        if (request.getVideo().startsWith("blob:") || request.getVideo().startsWith("data:")) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "视频上传失败，请重新上传");
         }
         
         // 根据类型查找对应的API平台（type=video_analysis）
