@@ -83,7 +83,7 @@ public class UserService extends ServiceImpl<UserMapper, User> {
     public User createUser(User user) {
         // 手机号必填校验
         if (user.getPhone() == null || user.getPhone().trim().isEmpty()) {
-            throw new RuntimeException("手机号不能为空");
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "手机号不能为空");
         }
 
         // 检查手机号是否已存在
@@ -92,7 +92,7 @@ public class UserService extends ServiceImpl<UserMapper, User> {
             phoneWrapper.eq(User::getPhone, user.getPhone());
             phoneWrapper.eq(User::getDeleted, 0);
             if (userMapper.selectCount(phoneWrapper) > 0) {
-                throw new RuntimeException("手机号已存在");
+                throw new BusinessException(ErrorCode.USER_PHONE_EXISTS);
             }
         }
 
@@ -104,7 +104,7 @@ public class UserService extends ServiceImpl<UserMapper, User> {
             wrapper.eq(User::getDeleted, 0);
             User existing = userMapper.selectOne(wrapper);
             if (existing != null) {
-                throw new RuntimeException("邮箱已存在");
+                throw new BusinessException(ErrorCode.USER_EMAIL_EXISTS);
             }
         } else {
             user.setEmail(null); // 邮箱为空时设置为null
@@ -116,6 +116,14 @@ public class UserService extends ServiceImpl<UserMapper, User> {
                 user.setUsername("用户_" + user.getPhone().substring(user.getPhone().length() - 4));
             } else {
                 user.setUsername("用户_" + System.currentTimeMillis() % 10000);
+            }
+        } else {
+            // 检查用户名是否已存在
+            LambdaQueryWrapper<User> usernameWrapper = new LambdaQueryWrapper<>();
+            usernameWrapper.eq(User::getUsername, user.getUsername());
+            usernameWrapper.eq(User::getDeleted, 0);
+            if (userMapper.selectCount(usernameWrapper) > 0) {
+                throw new BusinessException(ErrorCode.USER_NAME_EXISTS);
             }
         }
 
@@ -158,15 +166,31 @@ public class UserService extends ServiceImpl<UserMapper, User> {
             wrapper.eq(User::getDeleted, 0);
             User other = userMapper.selectOne(wrapper);
             if (other != null) {
-                throw new RuntimeException("邮箱已被其他用户使用");
+                throw new BusinessException(ErrorCode.USER_EMAIL_EXISTS);
             }
             existing.setEmail(user.getEmail());
         }
         if (user.getUsername() != null) {
+            // 检查用户名是否被其他用户使用
+            LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(User::getUsername, user.getUsername());
+            wrapper.ne(User::getId, id);
+            wrapper.eq(User::getDeleted, 0);
+            if (userMapper.selectCount(wrapper) > 0) {
+                throw new BusinessException(ErrorCode.USER_NAME_EXISTS);
+            }
             existing.setUsername(user.getUsername());
             updatedUsername = user.getUsername();
         }
         if (user.getPhone() != null) {
+            // 检查手机号是否被其他用户使用
+            LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(User::getPhone, user.getPhone());
+            wrapper.ne(User::getId, id);
+            wrapper.eq(User::getDeleted, 0);
+            if (userMapper.selectCount(wrapper) > 0) {
+                throw new BusinessException(ErrorCode.USER_PHONE_EXISTS);
+            }
             existing.setPhone(user.getPhone());
         }
         if (user.getWechat() != null) {

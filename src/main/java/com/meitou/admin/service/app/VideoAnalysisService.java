@@ -62,6 +62,14 @@ public class VideoAnalysisService {
         }
     }
 
+    private String resolveUnknownAnalysisError(Exception e) {
+        String message = e != null ? e.getMessage() : null;
+        if (message != null && message.contains("timed out")) {
+            return "生成请求超时，请稍后重试";
+        }
+        return "系统繁忙，请稍后再试";
+    }
+
     private String extractUpstreamErrorMessage(JsonNode node) {
         if (node == null) {
             return null;
@@ -446,9 +454,10 @@ public class VideoAnalysisService {
             okHttpClient.newCall(reqBuilder.build()).enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) {
-                    failAndRefundIfPending(recordId, userId, recordSiteId, finalCost, e.getMessage(), "视频分析失败退款-" + finalModel);
+                    String errorMsg = resolveUnknownAnalysisError(e);
+                    failAndRefundIfPending(recordId, userId, recordSiteId, finalCost, errorMsg, "视频分析失败退款-" + finalModel);
 
-                    sendBusinessErrorEvent(emitter, ErrorCode.API_CALL_FAILED.getCode(), e.getMessage());
+                    sendBusinessErrorEvent(emitter, ErrorCode.API_CALL_FAILED.getCode(), errorMsg);
                     emitter.complete();
                 }
 
@@ -460,15 +469,18 @@ public class VideoAnalysisService {
                             String errorBody = responseBody != null ? responseBody.string() : "";
                             log.error("API Error: {} - {}", response.code(), errorBody);
 
-                            failAndRefundIfPending(recordId, userId, recordSiteId, finalCost, "API Error: " + response.code(), "视频分析失败退款-" + finalModel);
+                            String errorMsg = "系统繁忙，请稍后再试";
+                            failAndRefundIfPending(recordId, userId, recordSiteId, finalCost, errorMsg, "视频分析失败退款-" + finalModel);
 
-                            sendBusinessErrorEvent(emitter, ErrorCode.API_CALL_FAILED.getCode(), "API Error: " + response.code());
+                            sendBusinessErrorEvent(emitter, ErrorCode.API_CALL_FAILED.getCode(), errorMsg);
                             emitter.complete();
                             return;
                         }
 
                         if (responseBody == null) {
-                            failAndRefundIfPending(recordId, userId, recordSiteId, finalCost, "Empty response body", "视频分析失败退款-" + finalModel);
+                            String errorMsg = "系统繁忙，请稍后再试";
+                            failAndRefundIfPending(recordId, userId, recordSiteId, finalCost, errorMsg, "视频分析失败退款-" + finalModel);
+                            sendBusinessErrorEvent(emitter, ErrorCode.GENERATION_FAILED.getCode(), errorMsg);
                             emitter.complete();
                             return;
                         }
@@ -522,17 +534,19 @@ public class VideoAnalysisService {
 
                         emitter.complete();
                     } catch (Exception e) {
-                        failAndRefundIfPending(recordId, userId, recordSiteId, finalCost, e.getMessage(), "视频分析失败退款-" + finalModel);
+                        String errorMsg = resolveUnknownAnalysisError(e);
+                        failAndRefundIfPending(recordId, userId, recordSiteId, finalCost, errorMsg, "视频分析失败退款-" + finalModel);
 
-                        sendBusinessErrorEvent(emitter, ErrorCode.GENERATION_FAILED.getCode(), e.getMessage());
+                        sendBusinessErrorEvent(emitter, ErrorCode.GENERATION_FAILED.getCode(), errorMsg);
                         emitter.complete();
                     }
                 }
             });
 
         } catch (Exception e) {
-            failAndRefundIfPending(recordId, userId, recordSiteId, finalCost, e.getMessage(), "视频分析失败退款-" + finalModel);
-            sendBusinessErrorEvent(emitter, ErrorCode.GENERATION_FAILED.getCode(), e.getMessage());
+            String errorMsg = resolveUnknownAnalysisError(e);
+            failAndRefundIfPending(recordId, userId, recordSiteId, finalCost, errorMsg, "视频分析失败退款-" + finalModel);
+            sendBusinessErrorEvent(emitter, ErrorCode.GENERATION_FAILED.getCode(), errorMsg);
             emitter.complete();
         }
 

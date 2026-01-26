@@ -35,6 +35,12 @@ public class AnalysisRecord {
     private String content;
 
     /**
+     * 标题（由内容截取第一句话生成，不存数据库）
+     */
+    @TableField(exist = false)
+    private String title;
+
+    /**
      * 分析结果或优化后的提示词
      */
     private String result;

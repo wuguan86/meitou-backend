@@ -45,6 +45,12 @@ public class GenerationRecord {
     private String prompt;
 
     /**
+     * 标题（由提示词截取第一句话生成，不存数据库）
+     */
+    @TableField(exist = false)
+    private String title;
+
+    /**
      * 是否发布：0-否，1-是
      */
     @TableField("is_publish")

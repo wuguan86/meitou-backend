@@ -7,6 +7,8 @@ import com.meitou.admin.exception.BusinessException;
 import com.meitou.admin.exception.ErrorCode;
 import com.meitou.admin.mapper.GenerationRecordMapper;
 import com.meitou.admin.storage.FileStorageService;
+import com.meitou.admin.util.TitleUtil;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -40,6 +42,7 @@ public class GenerationRecordService extends ServiceImpl<GenerationRecordMapper,
         if (records != null) {
             for (GenerationRecord record : records) {
                 applySignedMediaUrls(record);
+                record.setTitle(TitleUtil.generateTitle(record.getPrompt()));
             }
         }
         return records;
@@ -57,6 +60,7 @@ public class GenerationRecordService extends ServiceImpl<GenerationRecordMapper,
             throw new BusinessException(ErrorCode.RECORD_NOT_FOUND);
         }
         applySignedMediaUrls(record);
+        record.setTitle(TitleUtil.generateTitle(record.getPrompt()));
         return record;
     }
 

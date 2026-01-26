@@ -1,6 +1,7 @@
 package com.meitou.admin.service.app;
 
 import com.meitou.admin.dto.app.PromptOptimizeRequest;
+import com.meitou.admin.util.TitleUtil;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -45,6 +46,8 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.ResourceAccessException;
+import java.net.SocketTimeoutException;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -242,13 +245,16 @@ public class GenerationService {
 
             return response;
 
+        } catch (BusinessException e) {
+            log.error("文生图失败：{}", e.getMessage(), e);
+            String friendlyMessage = resolveGenerationBusinessErrorMessage(e);
+            failGenerationTask(record, friendlyMessage);
+            throw new BusinessException(e.getCode(), friendlyMessage);
         } catch (Exception e) {
             log.error("文生图失败：{}", e.getMessage(), e);
-
-            // 阶段三：失败处理（更新记录+退款）
             failGenerationTask(record, e.getMessage());
-
-            throw new BusinessException(ErrorCode.GENERATION_FAILED.getCode(), "文生图失败：" + e.getMessage());
+            String friendlyMessage = resolveUnknownGenerationError(e);
+            throw new BusinessException(ErrorCode.GENERATION_FAILED.getCode(), friendlyMessage);
         }
     }
 
@@ -400,13 +406,16 @@ public class GenerationService {
             response.setStatus("success");
             return response;
 
+        } catch (BusinessException e) {
+            log.error("图生图失败：{}", e.getMessage(), e);
+            String friendlyMessage = resolveGenerationBusinessErrorMessage(e);
+            failGenerationTask(record, friendlyMessage);
+            throw new BusinessException(e.getCode(), friendlyMessage);
         } catch (Exception e) {
             log.error("图生图失败：{}", e.getMessage(), e);
-
-            // 阶段三：失败处理（更新记录+退款）
             failGenerationTask(record, e.getMessage());
-
-            throw new BusinessException(ErrorCode.GENERATION_FAILED.getCode(), "图生图失败：" + e.getMessage());
+            String friendlyMessage = resolveUnknownGenerationError(e);
+            throw new BusinessException(ErrorCode.GENERATION_FAILED.getCode(), friendlyMessage);
         }
     }
 
@@ -541,19 +550,16 @@ public class GenerationService {
             response.setFailureReason(failureReason);
             return response;
 
+        } catch (BusinessException e) {
+            log.error("文生视频失败：{}", e.getMessage(), e);
+            String friendlyMessage = resolveGenerationBusinessErrorMessage(e);
+            failGenerationTask(record, friendlyMessage);
+            throw new BusinessException(e.getCode(), friendlyMessage);
         } catch (Exception e) {
             log.error("文生视频失败：{}", e.getMessage(), e);
-
-            // 阶段三：失败处理（更新记录+退款）
             failGenerationTask(record, e.getMessage());
-
-            String errorMsg = e.getMessage();
-            if (errorMsg != null
-                    && (errorMsg.contains("Unrecognized token") || errorMsg.contains("JsonParseException"))) {
-                errorMsg = "API响应格式错误，请稍后重试";
-            }
-
-            throw new BusinessException(ErrorCode.GENERATION_FAILED.getCode(), "文生视频失败：" + errorMsg);
+            String friendlyMessage = resolveUnknownGenerationError(e);
+            throw new BusinessException(ErrorCode.GENERATION_FAILED.getCode(), friendlyMessage);
         }
     }
 
@@ -697,20 +703,55 @@ public class GenerationService {
             response.setFailureReason(failureReason);
             return response;
 
+        } catch (BusinessException e) {
+            log.error("图生视频失败：{}", e.getMessage());
+            String friendlyMessage = resolveGenerationBusinessErrorMessage(e);
+            failGenerationTask(record, friendlyMessage);
+            throw new BusinessException(e.getCode(), friendlyMessage);
         } catch (Exception e) {
             log.error("图生视频失败：{}", e.getMessage(), e);
-
-            // 阶段三：失败处理（更新记录+退款）
             failGenerationTask(record, e.getMessage());
-
-            String errorMsg = e.getMessage();
-            if (errorMsg != null
-                    && (errorMsg.contains("Unrecognized token") || errorMsg.contains("JsonParseException"))) {
-                errorMsg = "API响应格式错误，请稍后重试";
-            }
-
-            throw new BusinessException(ErrorCode.GENERATION_FAILED.getCode(), "图生视频失败：" + errorMsg);
+            String friendlyMessage = resolveUnknownGenerationError(e);
+            throw new BusinessException(ErrorCode.GENERATION_FAILED.getCode(), friendlyMessage);
         }
+    }
+
+    private String resolveUnknownGenerationError(Exception e) {
+        String errorMsg = e.getMessage();
+        if (errorMsg != null
+                && (errorMsg.contains("Unrecognized token") || errorMsg.contains("JsonParseException"))) {
+            return "API响应格式错误，请稍后重试";
+        }
+        return "系统繁忙，请稍后再试";
+    }
+
+    private String resolveGenerationBusinessErrorMessage(BusinessException e) {
+        if (e == null) {
+            return "系统繁忙，请稍后再试";
+        }
+        String message = e.getMessage();
+        if (message != null && message.contains("超时")) {
+            return "生成请求超时，请稍后重试";
+        }
+        Integer code = e.getCode();
+        if (code == null) {
+            return "系统繁忙，请稍后再试";
+        }
+        if (ErrorCode.API_CALL_FAILED.getCode().equals(code)
+                || ErrorCode.API_RESPONSE_ERROR.getCode().equals(code)
+                || ErrorCode.PARSE_RESPONSE_FAILED.getCode().equals(code)
+                || ErrorCode.GENERATION_FAILED.getCode().equals(code)) {
+            return "系统繁忙，请稍后再试";
+        }
+        return message != null ? message : "系统繁忙，请稍后再试";
+    }
+
+    private String resolveUnknownPromptOptimizeError(Exception e) {
+        String message = e != null ? e.getMessage() : null;
+        if (message != null && message.contains("timed out")) {
+            return "生成请求超时，请稍后重试";
+        }
+        return "系统繁忙，请稍后再试";
     }
 
     /**
@@ -806,6 +847,7 @@ public class GenerationService {
         }
 
         // 处理签名URL
+        record.setTitle(TitleUtil.generateTitle(record.getPrompt()));
         record.setContentUrl(fileStorageService.getFileUrl(record.getContentUrl()));
         if (record.getThumbnailUrl() != null) {
             record.setThumbnailUrl(fileStorageService.getFileUrl(record.getThumbnailUrl()));
@@ -915,6 +957,8 @@ public class GenerationService {
             }
 
             throw new BusinessException(ErrorCode.PARSE_RESPONSE_FAILED.getCode(), "无法解析视频URL");
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
             throw new BusinessException(ErrorCode.PARSE_RESPONSE_FAILED.getCode(), "解析视频响应失败: " + e.getMessage());
         }
@@ -1464,11 +1508,13 @@ public class GenerationService {
                 public void onFailure(Call call, IOException e) {
                     // Update Analysis Record (Failed)
                     analysisRecord.setStatus(2);
-                    analysisRecord.setErrorMsg(e.getMessage());
+                    String errorMsg = resolveUnknownPromptOptimizeError(e);
+                    analysisRecord.setErrorMsg(errorMsg);
                     analysisRecordMapper.updateById(analysisRecord);
 
                     try {
-                        emitter.completeWithError(e);
+                        emitter.send(SseEmitter.event().name("error").data(errorMsg));
+                        emitter.complete();
                     } catch (Exception ex) {
                         log.error("Error completing emitter", ex);
                     }
@@ -1481,10 +1527,11 @@ public class GenerationService {
                         if (!response.isSuccessful()) {
                             // Update Analysis Record (Failed)
                             analysisRecord.setStatus(2);
-                            analysisRecord.setErrorMsg("Request failed: " + response.code());
+                            String errorMsg = "系统繁忙，请稍后再试";
+                            analysisRecord.setErrorMsg(errorMsg);
                             analysisRecordMapper.updateById(analysisRecord);
 
-                            emitter.send(SseEmitter.event().name("error").data("Request failed: " + response.code()));
+                            emitter.send(SseEmitter.event().name("error").data(errorMsg));
                             emitter.complete();
                             return;
                         }
@@ -1492,9 +1539,11 @@ public class GenerationService {
                         if (responseBody == null) {
                             // Update Analysis Record (Failed)
                             analysisRecord.setStatus(2);
-                            analysisRecord.setErrorMsg("Response body is null");
+                            String errorMsg = "系统繁忙，请稍后再试";
+                            analysisRecord.setErrorMsg(errorMsg);
                             analysisRecordMapper.updateById(analysisRecord);
                             
+                            emitter.send(SseEmitter.event().name("error").data(errorMsg));
                             emitter.complete();
                             return;
                         }
@@ -1529,18 +1578,22 @@ public class GenerationService {
                         } else if (!isSuccess) {
                             // No data received and no [DONE], mark as failed
                             analysisRecord.setStatus(2);
-                            analysisRecord.setErrorMsg("No data received from API");
+                            String errorMsg = "系统繁忙，请稍后再试";
+                            analysisRecord.setErrorMsg(errorMsg);
                             analysisRecordMapper.updateById(analysisRecord);
+                            emitter.send(SseEmitter.event().name("error").data(errorMsg));
                         }
 
                         emitter.complete();
                     } catch (Exception e) {
                         // Update Analysis Record (Failed)
                         analysisRecord.setStatus(2);
-                        analysisRecord.setErrorMsg(e.getMessage());
+                        String errorMsg = resolveUnknownPromptOptimizeError(e);
+                        analysisRecord.setErrorMsg(errorMsg);
                         analysisRecordMapper.updateById(analysisRecord);
 
-                        emitter.completeWithError(e);
+                        emitter.send(SseEmitter.event().name("error").data(errorMsg));
+                        emitter.complete();
                     }
                 }
             });
@@ -1548,9 +1601,14 @@ public class GenerationService {
         } catch (Exception e) {
             // Update Analysis Record (Failed)
             analysisRecord.setStatus(2);
-            analysisRecord.setErrorMsg(e.getMessage());
+            String errorMsg = resolveUnknownPromptOptimizeError(e);
+            analysisRecord.setErrorMsg(errorMsg);
             analysisRecordMapper.updateById(analysisRecord);
-            emitter.completeWithError(e);
+            try {
+                emitter.send(SseEmitter.event().name("error").data(errorMsg));
+            } catch (Exception ignored) {
+            }
+            emitter.complete();
         }
 
         return emitter;
@@ -1918,6 +1976,12 @@ public class GenerationService {
             log.debug("API响应: {}", response.getBody());
             return response.getBody();
 
+        } catch (ResourceAccessException e) {
+            log.error("调用API平台接口超时或网络错误：{}", e.getMessage(), e);
+            if (e.getCause() instanceof SocketTimeoutException || e.getMessage().contains("timed out")) {
+                throw new BusinessException(ErrorCode.API_CALL_FAILED.getCode(), "生成请求超时，请稍后重试");
+            }
+            throw new BusinessException(ErrorCode.API_CALL_FAILED.getCode(), "调用API平台接口失败：" + e.getMessage());
         } catch (Exception e) {
             log.error("调用API平台接口失败：{}", e.getMessage(), e);
             throw new BusinessException(ErrorCode.API_CALL_FAILED.getCode(), "调用API平台接口失败：" + e.getMessage());
@@ -2662,6 +2726,7 @@ public class GenerationService {
         // 处理签名URL
         if (result.getRecords() != null && !result.getRecords().isEmpty()) {
             for (GenerationRecord record : result.getRecords()) {
+                record.setTitle(TitleUtil.generateTitle(record.getPrompt()));
                 record.setContentUrl(fileStorageService.getFileUrl(record.getContentUrl()));
                 record.setThumbnailUrl(fileStorageService.getFileUrl(record.getThumbnailUrl()));
                 // record.setReferenceImage(fileStorageService.getFileUrl(record.getReferenceImage()));

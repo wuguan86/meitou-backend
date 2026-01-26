@@ -27,6 +27,9 @@ public enum ErrorCode {
     SITE_NOT_FOUND(1008, "无法识别站点信息"),
     ACCOUNT_LOCKED(1009, "账号已锁定，请15分钟后再试"),
     PASSWORD_TOO_WEAK(1010, "密码强度不足，需8位以上且包含字母数字特殊符号"),
+    USER_PHONE_EXISTS(1011, "手机号已存在"),
+    USER_EMAIL_EXISTS(1012, "邮箱已存在"),
+    USER_NAME_EXISTS(1013, "用户名已存在"),
 
     // 生成相关 2000-2999
     GENERATION_PLATFORM_NOT_CONFIGURED(2001, "生成平台未配置"),

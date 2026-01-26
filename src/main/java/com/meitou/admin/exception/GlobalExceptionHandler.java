@@ -54,7 +54,8 @@ public class GlobalExceptionHandler {
 
         if (businessCode >= 2000 && businessCode < 3000) {
             if (ErrorCode.API_CALL_FAILED.getCode().equals(businessCode) || ErrorCode.API_RESPONSE_ERROR.getCode().equals(businessCode)) {
-                return HttpStatus.BAD_GATEWAY;
+                // Return 400 instead of 502 to ensure frontend receives the JSON body with error message
+                return HttpStatus.BAD_REQUEST;
             }
             return HttpStatus.INTERNAL_SERVER_ERROR;
         }
@@ -123,7 +124,7 @@ public class GlobalExceptionHandler {
         log.error("运行时异常: ", e);
         // 运行时异常通常视为系统错误，返回 500
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Result.error(500, "系统处理请求时发生错误，请联系管理员"));
+                .body(Result.error(500, "系统繁忙，请稍后再试"));
     }
     
     /**
@@ -134,7 +135,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Result<?>> handleException(Exception e) {
         log.error("系统异常: ", e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Result.error(500, "系统内部错误，请联系管理员"));
+                .body(Result.error(500, "系统繁忙，请稍后再试"));
     }
 }
 

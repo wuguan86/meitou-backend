@@ -10,6 +10,7 @@ import com.meitou.admin.entity.User;
 import com.meitou.admin.exception.BusinessException;
 import com.meitou.admin.exception.ErrorCode;
 import com.meitou.admin.storage.FileStorageService;
+import com.meitou.admin.util.TitleUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,7 +60,7 @@ public class UserAssetAppService extends ServiceImpl<UserAssetMapper, UserAsset>
         
         // 创建资产对象
         UserAsset asset = new UserAsset();
-        asset.setTitle(title);
+        asset.setTitle(TitleUtil.generateTitle(title));
         asset.setType(type);
         asset.setSiteId(siteId);
         asset.setUrl(url);
@@ -127,9 +128,12 @@ public class UserAssetAppService extends ServiceImpl<UserAssetMapper, UserAsset>
         
         List<UserAsset> assets = assetMapper.selectList(wrapper);
         
-        // 处理签名URL
+        // 处理签名URL和标题
         if (assets != null && !assets.isEmpty()) {
             for (UserAsset asset : assets) {
+                // 处理标题（如果太长则截取）
+                asset.setTitle(TitleUtil.generateTitle(asset.getTitle()));
+
                 // 如果是视频且没有缩略图，尝试生成
                 if ("video".equals(asset.getType()) && (asset.getThumbnail() == null || asset.getThumbnail().isEmpty())) {
                     String u = asset.getUrl();

@@ -42,6 +42,14 @@ public class AnalysisService {
     private final UserMapper userMapper;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    private String resolveUnknownAnalysisError(Exception e) {
+        String message = e != null ? e.getMessage() : null;
+        if (message != null && message.contains("timed out")) {
+            return "生成请求超时，请稍后重试";
+        }
+        return "系统繁忙，请稍后再试";
+    }
     
     /**
      * 构造函数，初始化RestTemplate并配置超时时间
@@ -132,6 +140,7 @@ public class AnalysisService {
             
         } catch (Exception e) {
             log.error("图片分析失败：{}", e.getMessage(), e);
+            String errorMsg = resolveUnknownAnalysisError(e);
             
             // 保存失败记录
             try {
@@ -148,7 +157,7 @@ public class AnalysisService {
                 log.error("保存失败记录时出错：{}", ex.getMessage());
             }
             
-            throw new BusinessException(ErrorCode.GENERATION_FAILED.getCode(), "图片分析失败：" + e.getMessage());
+            throw new BusinessException(ErrorCode.GENERATION_FAILED.getCode(), "图片分析失败：" + errorMsg);
         }
     }
     
@@ -236,11 +245,12 @@ public class AnalysisService {
             
         } catch (Exception e) {
             log.error("视频分析失败：{}", e.getMessage(), e);
+            String errorMsg = resolveUnknownAnalysisError(e);
             
             // Update Analysis Record (Failed)
             if (analysisRecord.getId() != null) {
                 analysisRecord.setStatus(2);
-                analysisRecord.setErrorMsg(e.getMessage());
+                analysisRecord.setErrorMsg(errorMsg);
                 analysisRecordMapper.updateById(analysisRecord);
             }
 
@@ -259,7 +269,7 @@ public class AnalysisService {
                 log.error("保存失败记录时出错：{}", ex.getMessage());
             }
             
-            throw new BusinessException(ErrorCode.GENERATION_FAILED.getCode(), "视频分析失败：" + e.getMessage());
+            throw new BusinessException(ErrorCode.GENERATION_FAILED.getCode(), "视频分析失败：" + errorMsg);
         }
     }
     
