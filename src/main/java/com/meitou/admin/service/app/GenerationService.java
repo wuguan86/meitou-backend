@@ -746,6 +746,20 @@ public class GenerationService {
         return message != null ? message : "系统繁忙，请稍后再试";
     }
 
+    private String resolveGenerationFailureMessage(String reason) {
+        if (reason == null || reason.isBlank()) {
+            return "系统繁忙，请稍后再试";
+        }
+        String lower = reason.toLowerCase();
+        if (lower.contains("timeout") || lower.contains("timed out")) {
+            return "目前使用该模型用户较多，请稍后或更换模型尝试";
+        }
+        if ("error".equalsIgnoreCase(reason.trim())) {
+            return "系统繁忙，请稍后再试";
+        }
+        return "系统繁忙，请稍后再试";
+    }
+
     private String resolveUnknownPromptOptimizeError(Exception e) {
         String message = e != null ? e.getMessage() : null;
         if (message != null && message.contains("timed out")) {
@@ -2625,9 +2639,10 @@ public class GenerationService {
                                     reason += ": " + dataNode.get("error").asText();
                                 }
 
-                                failGenerationTask(record, reason);
+                                String friendlyReason = resolveGenerationFailureMessage(reason);
+                                failGenerationTask(record, friendlyReason);
                                 response.setStatus("failed");
-                                response.setErrorMessage(reason);
+                                response.setErrorMessage(friendlyReason);
                             } else if ("RUNNING".equalsIgnoreCase(status)) {
                                 response.setStatus("processing");
                             }
