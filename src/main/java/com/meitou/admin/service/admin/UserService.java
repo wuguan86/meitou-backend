@@ -13,6 +13,7 @@ import com.meitou.admin.exception.ErrorCode;
 import com.meitou.admin.mapper.PublishedContentMapper;
 import com.meitou.admin.mapper.UserMapper;
 import com.meitou.admin.mapper.UserTransactionMapper;
+import com.meitou.admin.service.app.PointsLedgerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,7 @@ public class UserService extends ServiceImpl<UserMapper, User> {
     private final UserTransactionMapper userTransactionMapper; // 用户流水Mapper
     private final BCryptPasswordEncoder passwordEncoder; // 密码编码器（通过依赖注入）
     private final PublishedContentMapper publishedContentMapper;
+    private final PointsLedgerService pointsLedgerService;
     
     /**
      * 获取用户列表（支持站点ID和搜索，分页）
@@ -282,23 +284,9 @@ public class UserService extends ServiceImpl<UserMapper, User> {
         }
 
         getUserById(id);
-        int updatedRows = userMapper.incrementBalance(id, points, java.time.LocalDateTime.now());
-        if (updatedRows <= 0) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR);
-        }
-        
-        // 记录流水
-        User updatedUser = userMapper.selectById(id);
-        UserTransaction transaction = new UserTransaction();
-        transaction.setUserId(id);
-        transaction.setType("SYSTEM");
-        transaction.setAmount(points);
-        transaction.setBalanceAfter(updatedUser.getBalance());
-        transaction.setDescription("系统赠送积分");
-        transaction.setSiteId(siteId);
-        userTransactionMapper.insert(transaction);
-        
-        return updatedUser;
+        pointsLedgerService.grantNonExpiringPoints(id, points, "SYSTEM", null, "系统赠送积分", null);
+
+        return userMapper.selectById(id);
     }
 }
 

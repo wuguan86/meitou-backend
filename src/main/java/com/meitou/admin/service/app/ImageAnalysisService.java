@@ -37,6 +37,7 @@ public class ImageAnalysisService {
     private final AnalysisRecordMapper analysisRecordMapper;
     private final TransactionTemplate transactionTemplate;
     private final AliyunOssService aliyunOssService;
+    private final PointsLedgerService pointsLedgerService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final OkHttpClient okHttpClient = new OkHttpClient.Builder()
@@ -184,12 +185,14 @@ public class ImageAnalysisService {
                                 UserTransactionMapper userTransactionMapper,
                                 AnalysisRecordMapper analysisRecordMapper,
                                 AliyunOssService aliyunOssService,
+                                PointsLedgerService pointsLedgerService,
                                 TransactionTemplate transactionTemplate) {
         this.apiPlatformService = apiPlatformService;
         this.userMapper = userMapper;
         this.userTransactionMapper = userTransactionMapper;
         this.analysisRecordMapper = analysisRecordMapper;
         this.aliyunOssService = aliyunOssService;
+        this.pointsLedgerService = pointsLedgerService;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -234,29 +237,7 @@ public class ImageAnalysisService {
                 if (userId == null) {
                     throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "退款用户缺失");
                 }
-                int balanceUpdated = userMapper.incrementBalance(userId, cost, LocalDateTime.now());
-                if (balanceUpdated == 0) {
-                    throw new BusinessException(ErrorCode.SYSTEM_ERROR);
-                }
-
-                User userAfter = userMapper.selectById(userId);
-                if (userAfter == null) {
-                    throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-                }
-                int balanceAfter = userAfter.getBalance() != null ? userAfter.getBalance() : 0;
-
-                UserTransaction transaction = new UserTransaction();
-                transaction.setUserId(userId);
-                transaction.setType("REFUND");
-                transaction.setAmount(cost);
-                transaction.setBalanceAfter(balanceAfter);
-                transaction.setDescription(description);
-                transaction.setReferenceId(recordId);
-                transaction.setSiteId(siteId);
-                int inserted = userTransactionMapper.insert(transaction);
-                if (inserted <= 0) {
-                    throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "退款流水写入失败");
-                }
+                pointsLedgerService.refund(userId, "image_analysis", recordId, description);
             }
 
             return null;
@@ -351,22 +332,6 @@ public class ImageAnalysisService {
         }
 
         AnalysisRecord analysisRecord = transactionTemplate.execute(status -> {
-            if (finalCost > 0) {
-                int updatedRows = userMapper.deductBalance(userId, finalCost, LocalDateTime.now());
-                if (updatedRows == 0) {
-                    throw new BusinessException(ErrorCode.INSUFFICIENT_BALANCE);
-                }
-            }
-
-            User userAfter = userMapper.selectById(userId);
-            if (userAfter == null) {
-                throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-            }
-            int balanceAfter = userAfter.getBalance() != null ? userAfter.getBalance() : 0;
-            if (balanceAfter < 0) {
-                throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "算力余额异常");
-            }
-
             // Save Analysis Record (Pending)
             AnalysisRecord record = new AnalysisRecord();
             record.setUserId(userId);
@@ -379,18 +344,8 @@ public class ImageAnalysisService {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "分析记录写入失败");
             }
 
-            // Record transaction
-            UserTransaction transaction = new UserTransaction();
-            transaction.setUserId(userId);
-            transaction.setType("CONSUME");
-            transaction.setAmount(-finalCost);
-            transaction.setBalanceAfter(balanceAfter);
-            transaction.setDescription("图片分析-" + finalModel);
-            transaction.setReferenceId(record.getId());
-            transaction.setSiteId(siteId);
-            int txInserted = userTransactionMapper.insert(transaction);
-            if (txInserted <= 0) {
-                throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "交易流水写入失败");
+            if (finalCost > 0) {
+                pointsLedgerService.deduct(userId, finalCost, "image_analysis", record.getId(), "图片分析-" + finalModel);
             }
 
             return record;

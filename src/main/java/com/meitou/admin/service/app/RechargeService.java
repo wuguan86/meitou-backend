@@ -45,6 +45,8 @@ public class RechargeService {
     private final PaymentConfigMapper paymentConfigMapper;
     private final RechargeConfigService rechargeConfigService;
     private final PaymentService paymentService;
+    private final MembershipOrderService membershipOrderService;
+    private final PointsLedgerService pointsLedgerService;
     private final RateLimiter rateLimiter;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -99,6 +101,8 @@ public class RechargeService {
         order.setUserId(userId);
         order.setAmount(request.getAmount());
         order.setPoints(points);
+        order.setProductType("points_recharge");
+        order.setProductPayload(null);
         order.setPaymentType(request.getPaymentType());
         order.setStatus("pending"); // 待支付
         order.setCreatedAt(LocalDateTime.now());
@@ -152,6 +156,7 @@ public class RechargeService {
         response.setPoints(points);
         response.setPaymentType(request.getPaymentType());
         response.setStatus(order.getStatus());
+        response.setProductType(order.getProductType());
         try {
             response.setPaymentParams(objectMapper.writeValueAsString(paymentParams));
         } catch (Exception e) {
@@ -318,7 +323,7 @@ public class RechargeService {
             }
 
             // 更新用户余额（原子操作）
-            applyRechargeToUser(order);
+            applyPaidOrder(order);
 
             log.info("订单支付成功：订单号={}, 用户ID={}, 金额={}, 算力={}",
                     orderNo, order.getUserId(), order.getAmount(), order.getPoints());
@@ -361,6 +366,7 @@ public class RechargeService {
         response.setPoints(order.getPoints());
         response.setPaymentType(order.getPaymentType());
         response.setStatus(order.getStatus());
+        response.setProductType(order.getProductType());
         response.setCreatedAt(order.getCreatedAt());
         response.setPaidAt(order.getPaidAt());
         response.setCompletedAt(order.getCompletedAt());
@@ -437,6 +443,7 @@ public class RechargeService {
             response.setPoints(order.getPoints());
             response.setPaymentType(order.getPaymentType());
             response.setStatus(order.getStatus());
+            response.setProductType(order.getProductType());
             response.setCreatedAt(order.getCreatedAt());
             response.setPaidAt(order.getPaidAt());
             response.setCompletedAt(order.getCompletedAt());
@@ -592,7 +599,7 @@ public class RechargeService {
             return true; // 返回成功，因为订单确实已经支付了
         }
 
-        applyRechargeToUser(order);
+        applyPaidOrder(order);
 
         log.info("微信支付订单成功：订单号={}, 用户ID={}, 金额={}, 算力={}",
                 orderNo, order.getUserId(), order.getAmount(), order.getPoints());
@@ -702,6 +709,17 @@ public class RechargeService {
 
         log.info("用户余额更新成功：用户ID={}, 订单号={}, 增加算力={}, 余额变更后={}",
                 order.getUserId(), order.getOrderNo(), order.getPoints(), balanceAfter);
+    }
+
+    private void applyPaidOrder(RechargeOrder order) {
+        if (order == null) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "订单为空");
+        }
+        if ("membership".equals(order.getProductType())) {
+            membershipOrderService.applyPaidOrder(order);
+            return;
+        }
+        pointsLedgerService.applyRechargePaid(order);
     }
 
     private SignatureHeader buildWechatSignatureHeader(Map<String, String> headers) {

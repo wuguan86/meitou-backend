@@ -54,6 +54,9 @@ public interface UserMapper extends BaseMapper<User> {
     @Update("UPDATE users SET balance = balance + #{delta}, updated_at = #{updatedAt} WHERE id = #{userId}")
     int incrementBalance(@Param("userId") Long userId, @Param("delta") Integer delta, @Param("updatedAt") java.time.LocalDateTime updatedAt);
 
+    @Update("UPDATE users SET balance = IF(balance >= #{delta}, balance - #{delta}, 0), updated_at = #{updatedAt} WHERE id = #{userId}")
+    int decrementBalanceFloorZero(@Param("userId") Long userId, @Param("delta") Integer delta, @Param("updatedAt") java.time.LocalDateTime updatedAt);
+
     /**
      * 根据手机号查询用户（包含已删除的）
      * @param phone 手机号

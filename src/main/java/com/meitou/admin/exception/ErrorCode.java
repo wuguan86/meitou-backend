@@ -56,7 +56,10 @@ public enum ErrorCode {
     PAYMENT_METHOD_DISABLED(4006, "支付方式未启用"),
     PAYMENT_METHOD_NOT_SUPPORTED(4007, "不支持的支付方式"),
     ORDER_STATUS_INVALID(4008, "订单状态无效"),
-    INSUFFICIENT_BALANCE(4009, "算力不足，请充值！");
+    INSUFFICIENT_BALANCE(4009, "算力不足，请充值！"),
+    MEMBERSHIP_PACKAGE_NOT_FOUND(4010, "会员套餐不存在"),
+    MEMBERSHIP_TYPE_SWITCH_NOT_ALLOWED(4011, "当前会员未到期，暂不支持购买其它类型会员"),
+    MEMBERSHIP_ORDER_INVALID(4012, "会员订单无效");
     
     private final Integer code;
     private final String message;

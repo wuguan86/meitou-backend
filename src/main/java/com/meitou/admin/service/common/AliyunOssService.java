@@ -16,6 +16,7 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -315,6 +316,122 @@ public class AliyunOssService {
         }
     }
 
+    public String getSignedDownloadUrl(String keyOrUrl, String filename) {
+        if (keyOrUrl == null || keyOrUrl.isEmpty()) {
+            return keyOrUrl;
+        }
+
+        FileStorageConfig.AliyunConfig config = fileStorageConfig.getAliyun();
+        if (config == null) {
+            return keyOrUrl;
+        }
+
+        String endpoint = cleanEndpointHost(config.getEndpoint());
+        if (endpoint.isEmpty() || isBlank(config.getBucketName()) || isBlank(config.getAccessKeyId()) || isBlank(config.getAccessKeySecret())) {
+            return keyOrUrl;
+        }
+
+        boolean isHttp = keyOrUrl.startsWith("http://") || keyOrUrl.startsWith("https://");
+        if (isHttp && !isAliyunOssUrl(keyOrUrl)) {
+            return keyOrUrl;
+        }
+
+        if (!isHttp) {
+            String type = fileStorageConfig.getType();
+            if (type == null || !"aliyun".equalsIgnoreCase(type)) {
+                return keyOrUrl;
+            }
+        }
+
+        String rawQuery = null;
+        String urlWithoutQuery = keyOrUrl;
+        int queryStartIndex = keyOrUrl.indexOf("?");
+        if (queryStartIndex >= 0) {
+            urlWithoutQuery = keyOrUrl.substring(0, queryStartIndex);
+            rawQuery = keyOrUrl.substring(queryStartIndex + 1);
+        }
+
+        String objectKey = urlWithoutQuery;
+        String bucketNameForSigning = config.getBucketName();
+        boolean isUrl = false;
+
+        String domain = normalizeDomainHost(config.getDomain());
+        if (!domain.isEmpty()) {
+            String cleanUrl = stripProtocol(urlWithoutQuery);
+            if (cleanUrl.startsWith(domain)) {
+                objectKey = cleanUrl.substring(domain.length());
+                isUrl = true;
+            }
+        }
+
+        if (!isUrl && isHttp) {
+            String cleanUrl = stripProtocol(urlWithoutQuery);
+            int slashIndex = cleanUrl.indexOf('/');
+            String hostPart = slashIndex >= 0 ? cleanUrl.substring(0, slashIndex) : cleanUrl;
+            String pathPart = slashIndex >= 0 ? cleanUrl.substring(slashIndex) : "";
+
+            String endpointSuffix = "." + endpoint;
+            if (hostPart.endsWith(endpointSuffix)) {
+                String bucketFromUrl = hostPart.substring(0, hostPart.length() - endpointSuffix.length());
+                if (!bucketFromUrl.isEmpty()) {
+                    bucketNameForSigning = bucketFromUrl;
+                    objectKey = pathPart;
+                }
+            }
+        }
+
+        while (objectKey.startsWith("/")) {
+            objectKey = objectKey.substring(1);
+        }
+
+        if (objectKey.startsWith("http://") || objectKey.startsWith("https://")) {
+            if (keyOrUrl.contains("://")) {
+                return keyOrUrl;
+            }
+            objectKey = keyOrUrl;
+        }
+
+        String contentDisposition = buildContentDisposition(filename);
+
+        OSS ossClient = null;
+        try {
+            String endpointWithProtocol = config.getEndpoint();
+            if (endpointWithProtocol == null) {
+                return keyOrUrl;
+            }
+            if (!endpointWithProtocol.startsWith("http://") && !endpointWithProtocol.startsWith("https://")) {
+                endpointWithProtocol = "https://" + endpointWithProtocol;
+            }
+
+            ossClient = new OSSClientBuilder().build(endpointWithProtocol, config.getAccessKeyId(), config.getAccessKeySecret());
+
+            Date expiration = new Date(System.currentTimeMillis() + 3600 * 1000);
+            GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(bucketNameForSigning, objectKey, HttpMethod.GET);
+            request.setExpiration(expiration);
+
+            if (contentDisposition != null && !contentDisposition.isEmpty()) {
+                request.addQueryParameter("response-content-disposition", contentDisposition);
+            }
+
+            Map<String, String> extraQueryParameters = parseQueryParameters(rawQuery);
+            for (Map.Entry<String, String> entry : extraQueryParameters.entrySet()) {
+                if (!isSignatureRelatedParameter(entry.getKey())) {
+                    request.addQueryParameter(entry.getKey(), entry.getValue());
+                }
+            }
+
+            URL url = ossClient.generatePresignedUrl(request);
+            return url.toString();
+        } catch (Exception e) {
+            log.error("生成OSS下载签名URL失败: {}", keyOrUrl, e);
+            return keyOrUrl;
+        } finally {
+            if (ossClient != null) {
+                ossClient.shutdown();
+            }
+        }
+    }
+
     private boolean isAliyunOssUrl(String url) {
         if (url == null) {
             return false;
@@ -409,5 +526,23 @@ public class AliyunOssService {
                 || name.equals("x-oss-expires")
                 || name.equals("x-oss-signature-nonce")
                 || name.equals("x-oss-additional-headers");
+    }
+
+    private String buildContentDisposition(String filename) {
+        if (filename == null) {
+            return null;
+        }
+        String trimmed = filename.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        String safeName = trimmed.replace("\\", "_").replace("/", "_").replace("\"", "_");
+        String encoded;
+        try {
+            encoded = URLEncoder.encode(safeName, StandardCharsets.UTF_8).replace("+", "%20");
+        } catch (Exception e) {
+            encoded = safeName;
+        }
+        return "attachment; filename=\"" + safeName + "\"; filename*=UTF-8''" + encoded;
     }
 }

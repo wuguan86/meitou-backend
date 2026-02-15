@@ -67,6 +67,7 @@ public class GenerationService {
     private final ApiParameterMappingCacheService apiParameterMappingCacheService;
     private final UserMapper userMapper;
     private final UserTransactionMapper userTransactionMapper;
+    private final PointsLedgerService pointsLedgerService;
     private final com.meitou.admin.service.common.AliyunOssService aliyunOssService;
     private final FileStorageService fileStorageService;
 
@@ -88,6 +89,7 @@ public class GenerationService {
             ApiParameterMappingCacheService apiParameterMappingCacheService,
             UserMapper userMapper,
             UserTransactionMapper userTransactionMapper,
+            PointsLedgerService pointsLedgerService,
             com.meitou.admin.service.common.AliyunOssService aliyunOssService,
             TransactionTemplate transactionTemplate,
             FileStorageService fileStorageService) {
@@ -97,6 +99,7 @@ public class GenerationService {
         this.apiParameterMappingCacheService = apiParameterMappingCacheService;
         this.userMapper = userMapper;
         this.userTransactionMapper = userTransactionMapper;
+        this.pointsLedgerService = pointsLedgerService;
         this.aliyunOssService = aliyunOssService;
         this.transactionTemplate = transactionTemplate;
         this.fileStorageService = fileStorageService;
@@ -1250,22 +1253,6 @@ public class GenerationService {
                 throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "站点信息缺失");
             }
 
-            if (cost > 0) {
-                int updateRows = userMapper.deductBalance(userId, cost, LocalDateTime.now());
-                if (updateRows == 0) {
-                    throw new BusinessException(ErrorCode.INSUFFICIENT_BALANCE);
-                }
-            }
-
-            User userAfter = userMapper.selectById(userId);
-            if (userAfter == null) {
-                throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-            }
-            int balanceAfter = userAfter.getBalance() != null ? userAfter.getBalance() : 0;
-            if (balanceAfter < 0) {
-                throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "算力余额异常");
-            }
-
             GenerationRecord record = new GenerationRecord();
             record.setUserId(userId);
             record.setUsername(username);
@@ -1283,18 +1270,8 @@ public class GenerationService {
             }
             generationRecordMapper.insert(record);
 
-            // 记录流水
-            UserTransaction transaction = new UserTransaction();
-            transaction.setUserId(userId);
-            transaction.setType("CONSUME");
-            transaction.setAmount(-cost);
-            transaction.setBalanceAfter(balanceAfter);
-            transaction.setReferenceId(record.getId());
-            transaction.setDescription("AI生成消耗: " + type);
-            transaction.setSiteId(siteId);
-            int inserted = userTransactionMapper.insert(transaction);
-            if (inserted <= 0) {
-                throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "交易流水写入失败");
+            if (cost > 0) {
+                pointsLedgerService.deduct(userId, cost, "generation", record.getId(), "AI生成消耗: " + type);
             }
 
             return record;
@@ -1419,26 +1396,8 @@ public class GenerationService {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "退款用户缺失");
             }
 
-            int balanceUpdated = userMapper.incrementBalance(userId, cost, LocalDateTime.now());
-            if (balanceUpdated == 0) {
-                throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "退款失败");
-            }
-
-            User userAfter = userMapper.selectById(userId);
-            int balanceAfter = (userAfter != null && userAfter.getBalance() != null) ? userAfter.getBalance() : 0;
-
-            UserTransaction transaction = new UserTransaction();
-            transaction.setUserId(userId);
-            transaction.setType("REFUND");
-            transaction.setAmount(cost);
-            transaction.setBalanceAfter(balanceAfter);
-            transaction.setReferenceId(record.getId());
-            transaction.setDescription("任务失败退款: " + (record.getType() != null ? record.getType() : ""));
-            transaction.setSiteId(siteId);
-            int inserted = userTransactionMapper.insert(transaction);
-            if (inserted <= 0) {
-                throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "退款流水写入失败");
-            }
+            pointsLedgerService.refund(userId, "generation", record.getId(),
+                    "任务失败退款: " + (record.getType() != null ? record.getType() : ""));
             return null;
         }));
     }

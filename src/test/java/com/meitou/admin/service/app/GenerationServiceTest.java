@@ -2,8 +2,6 @@ package com.meitou.admin.service.app;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meitou.admin.entity.GenerationRecord;
-import com.meitou.admin.entity.User;
-import com.meitou.admin.entity.UserTransaction;
 import com.meitou.admin.mapper.AnalysisRecordMapper;
 import com.meitou.admin.mapper.GenerationRecordMapper;
 import com.meitou.admin.mapper.UserMapper;
@@ -34,6 +32,7 @@ class GenerationServiceTest {
         TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
         FileStorageService fileStorageService = mock(FileStorageService.class);
         ObjectMapper objectMapper = new ObjectMapper();
+        PointsLedgerService pointsLedgerService = mock(PointsLedgerService.class);
 
         when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
@@ -52,12 +51,6 @@ class GenerationServiceTest {
         record.setStatus("processing");
         when(generationRecordMapper.selectById(10L)).thenReturn(record);
 
-        when(userMapper.incrementBalance(anyLong(), anyInt(), any(java.time.LocalDateTime.class))).thenReturn(1);
-        User userAfter = new User();
-        userAfter.setBalance(100);
-        when(userMapper.selectById(anyLong())).thenReturn(userAfter);
-        when(userTransactionMapper.insert(any(UserTransaction.class))).thenReturn(1);
-
         GenerationService service = new GenerationService(
                 apiPlatformService,
                 generationRecordMapper,
@@ -65,6 +58,7 @@ class GenerationServiceTest {
                 mappingCacheService,
                 userMapper,
                 userTransactionMapper,
+                pointsLedgerService,
                 aliyunOssService,
                 transactionTemplate,
                 fileStorageService);
@@ -73,18 +67,13 @@ class GenerationServiceTest {
         service.failIfProcessingAndRefund(10L, "failure reason");
 
         // Verify refund occurred once
-        verify(userMapper, times(1)).incrementBalance(eq(20L), eq(50), any(java.time.LocalDateTime.class));
-        verify(userTransactionMapper, times(1)).insert(any(UserTransaction.class));
-
-        reset(userMapper, userTransactionMapper);
-        when(userMapper.selectById(anyLong())).thenReturn(userAfter);
-        when(userTransactionMapper.insert(any(UserTransaction.class))).thenReturn(1);
+        verify(pointsLedgerService, times(1)).refund(eq(20L), eq("generation"), eq(10L), anyString());
+        reset(pointsLedgerService);
 
         // Second call - Should be ignored by logic
         service.failIfProcessingAndRefund(10L, "failure reason");
 
         // Verify refund DID NOT occur again
-        verify(userMapper, never()).incrementBalance(anyLong(), anyInt(), any(java.time.LocalDateTime.class));
-        verify(userTransactionMapper, never()).insert(any(UserTransaction.class));
+        verify(pointsLedgerService, never()).refund(anyLong(), anyString(), anyLong(), anyString());
     }
 }

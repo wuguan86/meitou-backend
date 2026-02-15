@@ -40,6 +40,7 @@ public class VoiceCloneService {
     private final GenerationRecordMapper generationRecordMapper;
     private final UserMapper userMapper;
     private final UserTransactionMapper userTransactionMapper;
+    private final PointsLedgerService pointsLedgerService;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
     
@@ -49,11 +50,13 @@ public class VoiceCloneService {
     public VoiceCloneService(ApiPlatformService apiPlatformService, 
                             GenerationRecordMapper generationRecordMapper,
                             UserMapper userMapper,
-                            UserTransactionMapper userTransactionMapper) {
+                            UserTransactionMapper userTransactionMapper,
+                            PointsLedgerService pointsLedgerService) {
         this.apiPlatformService = apiPlatformService;
         this.generationRecordMapper = generationRecordMapper;
         this.userMapper = userMapper;
         this.userTransactionMapper = userTransactionMapper;
+        this.pointsLedgerService = pointsLedgerService;
         
         // 配置RestTemplate的超时时间
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -78,23 +81,20 @@ public class VoiceCloneService {
         }
 
         int cost = 15;
+        GenerationRecord record = new GenerationRecord();
+        record.setUserId(userId);
+        record.setUsername(user.getUsername());
+        record.setType("voice_clone");
+        record.setModel(request.getModel());
+        record.setPrompt(request.getText());
+        record.setStatus("processing");
+        record.setSiteId(SiteContext.getSiteId());
+        record.setCost(cost);
+        generationRecordMapper.insert(record);
+
         if (cost > 0) {
-            int updatedRows = userMapper.deductBalance(userId, cost, LocalDateTime.now());
-            if (updatedRows == 0) {
-                throw new BusinessException(ErrorCode.INSUFFICIENT_BALANCE);
-            }
-
-            User userAfter = userMapper.selectById(userId);
-            int balanceAfter = (userAfter != null && userAfter.getBalance() != null) ? userAfter.getBalance() : 0;
-
-            UserTransaction transaction = new UserTransaction();
-            transaction.setUserId(userId);
-            transaction.setType("CONSUME");
-            transaction.setAmount(-cost);
-            transaction.setBalanceAfter(balanceAfter);
-            transaction.setDescription("声音克隆-" + (request.getModel() != null ? request.getModel() : "default"));
-            transaction.setSiteId(SiteContext.getSiteId());
-            userTransactionMapper.insert(transaction);
+            pointsLedgerService.deduct(userId, cost, "voice_clone", record.getId(),
+                    "声音克隆-" + (request.getModel() != null ? request.getModel() : "default"));
         }
         
         // 根据类型查找对应的API平台（type=voice_clone）
@@ -124,18 +124,11 @@ public class VoiceCloneService {
             // 解析响应
             String audioUrl = parseAudioUrl(responseJson, voiceCloneInterface.getResponseMode());
             
-            // 保存生成记录
-            GenerationRecord record = new GenerationRecord();
-            record.setUserId(userId);
-            record.setUsername(user.getUsername());
-            record.setType("voice_clone");
-            record.setModel(request.getModel());
-            record.setPrompt(request.getText());
             record.setStatus("success");
             record.setSiteId(SiteContext.getSiteId());
             record.setContentUrl(audioUrl);
             record.setCost(cost);
-            generationRecordMapper.insert(record);
+            generationRecordMapper.updateById(record);
             
             // 构建响应
             VoiceCloneResponse response = new VoiceCloneResponse();
@@ -149,15 +142,10 @@ public class VoiceCloneService {
             
             // 保存失败记录
             try {
-                GenerationRecord record = new GenerationRecord();
-                record.setUserId(userId);
-                record.setUsername(user.getUsername());
-                record.setType("voice_clone");
-                record.setModel(request.getModel());
-                record.setPrompt(request.getText());
                 record.setStatus("failed");
                 record.setSiteId(SiteContext.getSiteId());
-                generationRecordMapper.insert(record);
+                record.setFailureReason(e.getMessage());
+                generationRecordMapper.updateById(record);
             } catch (Exception ex) {
                 log.error("保存失败记录时出错：{}", ex.getMessage());
             }

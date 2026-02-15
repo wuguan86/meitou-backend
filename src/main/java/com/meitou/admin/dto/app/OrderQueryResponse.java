@@ -34,6 +34,11 @@ public class OrderQueryResponse {
      * 订单状态
      */
     private String status;
+
+    /**
+     * 订单产品类型
+     */
+    private String productType;
     
     /**
      * 创建时间

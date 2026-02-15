@@ -40,6 +40,18 @@ public class RechargeOrder {
      * 充值算力（积分）
      */
     private Integer points;
+
+    /**
+     * 订单产品类型：points_recharge-算力充值，membership-会员购买/续费
+     */
+    @TableField("product_type")
+    private String productType;
+
+    /**
+     * 产品信息（JSON）
+     */
+    @TableField("product_payload")
+    private String productPayload;
     
     /**
      * 支付方式：wechat-微信支付，alipay-支付宝支付
@@ -100,4 +112,3 @@ public class RechargeOrder {
     @TableLogic
     private Integer deleted;
 }
-

@@ -1,23 +1,18 @@
 package com.meitou.admin.service.app;
 
 import com.meitou.admin.entity.User;
-import com.meitou.admin.entity.UserTransaction;
 import com.meitou.admin.mapper.AnalysisRecordMapper;
 import com.meitou.admin.mapper.UserMapper;
 import com.meitou.admin.mapper.UserTransactionMapper;
 import com.meitou.admin.service.admin.ApiPlatformService;
 import com.meitou.admin.service.common.AliyunOssService;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.lang.reflect.Method;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
 
@@ -31,6 +26,7 @@ class ImageAnalysisServiceTest {
         AnalysisRecordMapper analysisRecordMapper = mock(AnalysisRecordMapper.class);
         TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
         AliyunOssService aliyunOssService = mock(AliyunOssService.class);
+        PointsLedgerService pointsLedgerService = mock(PointsLedgerService.class);
 
         when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
@@ -38,11 +34,6 @@ class ImageAnalysisServiceTest {
         });
 
         when(analysisRecordMapper.update(isNull(), any())).thenReturn(1);
-        when(userMapper.incrementBalance(anyLong(), anyInt(), any(java.time.LocalDateTime.class))).thenReturn(1);
-        User userAfter = new User();
-        userAfter.setBalance(123);
-        when(userMapper.selectById(anyLong())).thenReturn(userAfter);
-        when(userTransactionMapper.insert(any(UserTransaction.class))).thenReturn(1);
 
         ImageAnalysisService service = new ImageAnalysisService(
                 apiPlatformService,
@@ -50,6 +41,7 @@ class ImageAnalysisServiceTest {
                 userTransactionMapper,
                 analysisRecordMapper,
                 aliyunOssService,
+                pointsLedgerService,
                 transactionTemplate);
 
         Method method = ImageAnalysisService.class.getDeclaredMethod(
@@ -63,18 +55,7 @@ class ImageAnalysisServiceTest {
         int cost = 50;
         method.invoke(service, recordId, userId, siteId, cost, "err", "图片分析失败退款-testModel");
 
-        verify(userMapper).incrementBalance(eq(userId), eq(cost), any(java.time.LocalDateTime.class));
-
-        ArgumentCaptor<UserTransaction> txCaptor = ArgumentCaptor.forClass(UserTransaction.class);
-        verify(userTransactionMapper).insert((UserTransaction) txCaptor.capture());
-        UserTransaction tx = txCaptor.getValue();
-        assertNotNull(tx);
-        assertEquals("REFUND", tx.getType());
-        assertEquals(cost, tx.getAmount());
-        assertEquals(123, tx.getBalanceAfter());
-        assertEquals(recordId, tx.getReferenceId());
-        assertEquals(siteId, tx.getSiteId());
-        assertEquals("图片分析失败退款-testModel", tx.getDescription());
+        verify(pointsLedgerService).refund(eq(userId), eq("image_analysis"), eq(recordId), eq("图片分析失败退款-testModel"));
     }
 
     @Test
@@ -85,6 +66,7 @@ class ImageAnalysisServiceTest {
         AnalysisRecordMapper analysisRecordMapper = mock(AnalysisRecordMapper.class);
         TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
         AliyunOssService aliyunOssService = mock(AliyunOssService.class);
+        PointsLedgerService pointsLedgerService = mock(PointsLedgerService.class);
 
         when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
@@ -99,6 +81,7 @@ class ImageAnalysisServiceTest {
                 userTransactionMapper,
                 analysisRecordMapper,
                 aliyunOssService,
+                pointsLedgerService,
                 transactionTemplate);
 
         Method method = ImageAnalysisService.class.getDeclaredMethod(
@@ -108,7 +91,6 @@ class ImageAnalysisServiceTest {
 
         method.invoke(service, 10L, 20L, 1L, 50, "err", "desc");
 
-        verify(userMapper, never()).incrementBalance(anyLong(), anyInt(), any(java.time.LocalDateTime.class));
-        verify(userTransactionMapper, never()).insert(any(UserTransaction.class));
+        verify(pointsLedgerService, never()).refund(anyLong(), anyString(), anyLong(), anyString());
     }
 }

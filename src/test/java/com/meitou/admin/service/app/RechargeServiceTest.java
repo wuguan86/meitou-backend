@@ -57,6 +57,12 @@ class RechargeServiceTest {
         @Mock
         private PaymentService paymentService;
 
+        @Mock
+        private MembershipOrderService membershipOrderService;
+
+        @Mock
+        private PointsLedgerService pointsLedgerService;
+
         @Spy
         private RateLimiter rateLimiter = new RateLimiter();
 
@@ -101,8 +107,7 @@ class RechargeServiceTest {
                 CountDownLatch doneLatch = new CountDownLatch(concurrentRequests);
 
                 AtomicInteger successCount = new AtomicInteger(0);
-                AtomicInteger balanceUpdateCount = new AtomicInteger(0);
-                AtomicInteger transactionInsertCount = new AtomicInteger(0);
+                AtomicInteger applyRechargeCount = new AtomicInteger(0);
 
                 // 准备回调数据
                 Map<String, String> callbackData = new HashMap<>();
@@ -142,20 +147,10 @@ class RechargeServiceTest {
                                         return 0;
                                 });
 
-                when(userMapper.selectById(testUser.getId()))
-                                .thenReturn(testUser);
-
-                when(userMapper.incrementBalance(anyLong(), anyInt(), any(java.time.LocalDateTime.class)))
-                                .thenAnswer(invocation -> {
-                                        balanceUpdateCount.incrementAndGet();
-                                        return 1;
-                                });
-
-                when(userTransactionMapper.insert(any(UserTransaction.class)))
-                                .thenAnswer(invocation -> {
-                                        transactionInsertCount.incrementAndGet();
-                                        return 1;
-                                });
+                doAnswer(invocation -> {
+                        applyRechargeCount.incrementAndGet();
+                        return null;
+                }).when(pointsLedgerService).applyRechargePaid(any(RechargeOrder.class));
 
                 // 启动并发请求
                 for (int i = 0; i < concurrentRequests; i++) {
@@ -188,13 +183,9 @@ class RechargeServiceTest {
                 assertEquals(concurrentRequests, successCount.get(),
                                 "所有并发请求都应该返回成功");
 
-                // 关键断言：余额只更新1次
-                assertEquals(1, balanceUpdateCount.get(),
-                                "【幂等性验证】用户余额应该只更新1次，而不是" + balanceUpdateCount.get() + "次");
-
-                // 关键断言：交易记录只插入1次
-                assertEquals(1, transactionInsertCount.get(),
-                                "【幂等性验证】交易记录应该只插入1次，而不是" + transactionInsertCount.get() + "次");
+                // 关键断言：充值入账只触发1次（由积分桶总账处理）
+                assertEquals(1, applyRechargeCount.get(),
+                                "【幂等性验证】入账逻辑应该只触发1次，而不是" + applyRechargeCount.get() + "次");
 
                 // 验证 updateToPaidIfNotPaid 被调用过，具体次数取决于并发调度
                 verify(rechargeOrderMapper, atLeastOnce())

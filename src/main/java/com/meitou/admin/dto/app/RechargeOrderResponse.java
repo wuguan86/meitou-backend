@@ -34,6 +34,11 @@ public class RechargeOrderResponse {
      * 订单状态
      */
     private String status;
+
+    /**
+     * 订单产品类型
+     */
+    private String productType;
     
     /**
      * 支付参数（JSON字符串，包含二维码URL或支付链接等）
