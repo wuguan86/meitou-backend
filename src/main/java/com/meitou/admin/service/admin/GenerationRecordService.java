@@ -1,5 +1,6 @@
 package com.meitou.admin.service.admin;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.meitou.admin.entity.GenerationRecord;
@@ -26,26 +27,30 @@ public class GenerationRecordService extends ServiceImpl<GenerationRecordMapper,
     private final FileStorageService fileStorageService;
     
     /**
-     * 获取生成记录列表（按站点ID）
+     * 获取生成记录列表（按站点ID，分页）
      * 注意：调用此方法前，需要先设置 SiteContext.setSiteId(siteId)，
      * 这样多租户插件会自动添加 site_id 过滤条件
      * 
      * @param siteId 站点ID
-     * @return 记录列表
+     * @param page 页码
+     * @param size 每页数量
+     * @return 记录分页
      */
-    public List<GenerationRecord> getRecordsBySiteId(Long siteId) {
+    public Page<GenerationRecord> getRecordsBySiteId(Long siteId, int page, int size) {
         // 不在这里添加 siteId 条件，因为多租户插件会自动添加
         // 如果在这里添加，会导致 SQL 中出现重复的 site_id 条件
+        Page<GenerationRecord> pageParam = new Page<>(page, size);
         LambdaQueryWrapper<GenerationRecord> wrapper = new LambdaQueryWrapper<>();
         wrapper.orderByDesc(GenerationRecord::getCreatedAt);
-        List<GenerationRecord> records = recordMapper.selectList(wrapper);
-        if (records != null) {
-            for (GenerationRecord record : records) {
+        Page<GenerationRecord> result = recordMapper.selectPage(pageParam, wrapper);
+        
+        if (result.getRecords() != null) {
+            for (GenerationRecord record : result.getRecords()) {
                 applySignedMediaUrls(record);
                 record.setTitle(TitleUtil.generateTitle(record.getPrompt()));
             }
         }
-        return records;
+        return result;
     }
     
     /**

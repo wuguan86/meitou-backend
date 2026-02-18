@@ -110,7 +110,7 @@ public class PointsLedgerService {
             throw new BusinessException(ErrorCode.INSUFFICIENT_BALANCE);
         }
 
-        List<UserPointBucket> buckets = userPointBucketMapper.selectActiveBucketsForUpdate(userId);
+        List<UserPointBucket> buckets = userPointBucketMapper.selectBucketsForDeduct(userId, SiteContext.getSiteId(), now);
         int remaining = cost;
         for (UserPointBucket bucket : buckets) {
             if (remaining <= 0) {

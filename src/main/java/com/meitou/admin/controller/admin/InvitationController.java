@@ -63,6 +63,11 @@ public class InvitationController {
         String validStartDateStr = (String) request.get("validStartDate");
         String validEndDateStr = (String) request.get("validEndDate");
         
+        String type = (String) request.get("type");
+        Integer packageId = (Integer) request.get("packageId");
+        Integer duration = (Integer) request.get("duration");
+        String durationUnit = (String) request.get("durationUnit");
+        
         LocalDate validStartDate = validStartDateStr != null ? LocalDate.parse(validStartDateStr) : null;
         LocalDate validEndDate = validEndDateStr != null ? LocalDate.parse(validEndDateStr) : null;
         
@@ -71,7 +76,8 @@ public class InvitationController {
         }
         
         List<InvitationCode> codes = codeService.generateCodes(
-                count, points, maxUses, siteId, channel, validStartDate, validEndDate
+                count, points, maxUses, siteId, channel, validStartDate, validEndDate,
+                type, packageId, duration, durationUnit
         );
         return Result.success("生成成功", codes);
     }
@@ -81,10 +87,12 @@ public class InvitationController {
      * 
      * @param id 邀请码ID
      * @param code 邀请码信息
+     * @param siteId 站点ID
      * @return 更新后的邀请码
      */
     @PutMapping("/{id}")
-    public Result<InvitationCode> updateCode(@PathVariable Long id, @RequestBody InvitationCode code) {
+    @SiteScope
+    public Result<InvitationCode> updateCode(@PathVariable Long id, @RequestBody InvitationCode code, @RequestParam Long siteId) {
         InvitationCode updated = codeService.updateCode(id, code);
         return Result.success("更新成功", updated);
     }
@@ -93,10 +101,12 @@ public class InvitationController {
      * 删除邀请码
      * 
      * @param id 邀请码ID
+     * @param siteId 站点ID
      * @return 结果
      */
     @DeleteMapping("/{id}")
-    public Result<Void> deleteCode(@PathVariable Long id) {
+    @SiteScope
+    public Result<Void> deleteCode(@PathVariable Long id, @RequestParam Long siteId) {
         codeService.deleteCode(id);
         return Result.success("删除成功", null);
     }

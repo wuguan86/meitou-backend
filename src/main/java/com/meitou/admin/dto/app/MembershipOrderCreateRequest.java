@@ -13,6 +13,8 @@ public class MembershipOrderCreateRequest {
     @NotBlank
     private String billingCycle;
 
+    private Integer quantity;
+
     @NotBlank
     private String paymentType;
 }

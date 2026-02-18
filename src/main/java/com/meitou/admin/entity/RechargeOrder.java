@@ -111,4 +111,10 @@ public class RechargeOrder {
      */
     @TableLogic
     private Integer deleted;
+    
+    /**
+     * 用户信息（非数据库字段）
+     */
+    @TableField(exist = false)
+    private User user;
 }

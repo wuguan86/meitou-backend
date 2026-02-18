@@ -1,6 +1,9 @@
 package com.meitou.admin.service.app;
 
+import com.meitou.admin.service.admin.PromptHelperConfigService;
+import com.meitou.admin.entity.PromptHelperConfig;
 import com.meitou.admin.dto.app.PromptOptimizeRequest;
+import com.meitou.admin.service.common.AliyunOssService;
 import com.meitou.admin.util.TitleUtil;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -37,7 +40,6 @@ import com.meitou.admin.mapper.UserMapper;
 import com.meitou.admin.service.admin.ApiPlatformService;
 import com.meitou.admin.exception.BusinessException;
 import com.meitou.admin.exception.ErrorCode;
-import com.meitou.admin.entity.UserTransaction;
 import com.meitou.admin.mapper.UserTransactionMapper;
 import com.meitou.admin.storage.FileStorageService;
 import lombok.extern.slf4j.Slf4j;
@@ -70,6 +72,7 @@ public class GenerationService {
     private final PointsLedgerService pointsLedgerService;
     private final com.meitou.admin.service.common.AliyunOssService aliyunOssService;
     private final FileStorageService fileStorageService;
+    private final PromptHelperConfigService promptHelperConfigService;
 
     private final OkHttpClient okHttpClient = new OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -90,9 +93,10 @@ public class GenerationService {
             UserMapper userMapper,
             UserTransactionMapper userTransactionMapper,
             PointsLedgerService pointsLedgerService,
-            com.meitou.admin.service.common.AliyunOssService aliyunOssService,
+            AliyunOssService aliyunOssService,
             TransactionTemplate transactionTemplate,
-            FileStorageService fileStorageService) {
+            FileStorageService fileStorageService,
+            PromptHelperConfigService promptHelperConfigService) {
         this.apiPlatformService = apiPlatformService;
         this.generationRecordMapper = generationRecordMapper;
         this.analysisRecordMapper = analysisRecordMapper;
@@ -103,6 +107,7 @@ public class GenerationService {
         this.aliyunOssService = aliyunOssService;
         this.transactionTemplate = transactionTemplate;
         this.fileStorageService = fileStorageService;
+        this.promptHelperConfigService = promptHelperConfigService;
 
         // 配置RestTemplate的超时时间
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -1439,6 +1444,23 @@ public class GenerationService {
         analysisRecord.setSiteId(SiteContext.getSiteId());
         analysisRecordMapper.insert(analysisRecord);
 
+        // Deduct points
+        PromptHelperConfig config = promptHelperConfigService.getConfig();
+        int cost = (config != null && config.getComputeConsumption() != null) ? config.getComputeConsumption() : 20;
+        final int finalCost = cost;
+        
+        if (cost > 0) {
+            try {
+                pointsLedgerService.deduct(userId, cost, "prompt_optimization", analysisRecord.getId(), "提示词优化消耗");
+            } catch (Exception e) {
+                // Mark record as failed if deduction fails
+                analysisRecord.setStatus(2);
+                analysisRecord.setErrorMsg("余额不足或扣费失败: " + e.getMessage());
+                analysisRecordMapper.updateById(analysisRecord);
+                throw e;
+            }
+        }
+
         // 3. 构建请求
         SseEmitter emitter = new SseEmitter(60000L); // 1 minute timeout
 
@@ -1485,6 +1507,10 @@ public class GenerationService {
                     analysisRecord.setErrorMsg(errorMsg);
                     analysisRecordMapper.updateById(analysisRecord);
 
+                    if (finalCost > 0) {
+                        pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
+                    }
+
                     try {
                         emitter.send(SseEmitter.event().name("error").data(errorMsg));
                         emitter.complete();
@@ -1504,6 +1530,10 @@ public class GenerationService {
                             analysisRecord.setErrorMsg(errorMsg);
                             analysisRecordMapper.updateById(analysisRecord);
 
+                            if (finalCost > 0) {
+                                pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
+                            }
+
                             emitter.send(SseEmitter.event().name("error").data(errorMsg));
                             emitter.complete();
                             return;
@@ -1515,6 +1545,10 @@ public class GenerationService {
                             String errorMsg = "系统繁忙，请稍后再试";
                             analysisRecord.setErrorMsg(errorMsg);
                             analysisRecordMapper.updateById(analysisRecord);
+                            
+                            if (finalCost > 0) {
+                                pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
+                            }
                             
                             emitter.send(SseEmitter.event().name("error").data(errorMsg));
                             emitter.complete();
@@ -1554,6 +1588,11 @@ public class GenerationService {
                             String errorMsg = "系统繁忙，请稍后再试";
                             analysisRecord.setErrorMsg(errorMsg);
                             analysisRecordMapper.updateById(analysisRecord);
+                            
+                            if (finalCost > 0) {
+                                pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
+                            }
+
                             emitter.send(SseEmitter.event().name("error").data(errorMsg));
                         }
 
@@ -1564,6 +1603,10 @@ public class GenerationService {
                         String errorMsg = resolveUnknownPromptOptimizeError(e);
                         analysisRecord.setErrorMsg(errorMsg);
                         analysisRecordMapper.updateById(analysisRecord);
+
+                        if (finalCost > 0) {
+                            pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
+                        }
 
                         emitter.send(SseEmitter.event().name("error").data(errorMsg));
                         emitter.complete();
@@ -1577,6 +1620,11 @@ public class GenerationService {
             String errorMsg = resolveUnknownPromptOptimizeError(e);
             analysisRecord.setErrorMsg(errorMsg);
             analysisRecordMapper.updateById(analysisRecord);
+
+            if (finalCost > 0) {
+                pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
+            }
+
             try {
                 emitter.send(SseEmitter.event().name("error").data(errorMsg));
             } catch (Exception ignored) {
@@ -2232,66 +2280,7 @@ public class GenerationService {
         return imageUrls;
     }
 
-    /**
-     * 视频响应信息内部类
-     */
-    private static class VideoResponseInfo {
-        private String taskId; // 任务ID
-        private String videoUrl; // 视频URL
-        private String status; // 状态：running, succeeded, failed
-        private Integer progress; // 进度：0~100
-        private String failureReason; // 失败原因
-        private String errorMessage; // 错误信息
 
-        // Getters and Setters
-        public String getTaskId() {
-            return taskId;
-        }
-
-        public void setTaskId(String taskId) {
-            this.taskId = taskId;
-        }
-
-        public String getVideoUrl() {
-            return videoUrl;
-        }
-
-        public void setVideoUrl(String videoUrl) {
-            this.videoUrl = videoUrl;
-        }
-
-        public String getStatus() {
-            return status;
-        }
-
-        public void setStatus(String status) {
-            this.status = status;
-        }
-
-        public Integer getProgress() {
-            return progress;
-        }
-
-        public void setProgress(Integer progress) {
-            this.progress = progress;
-        }
-
-        public String getFailureReason() {
-            return failureReason;
-        }
-
-        public void setFailureReason(String failureReason) {
-            this.failureReason = failureReason;
-        }
-
-        public String getErrorMessage() {
-            return errorMessage;
-        }
-
-        public void setErrorMessage(String errorMessage) {
-            this.errorMessage = errorMessage;
-        }
-    }
 
     /**
      * 计算消耗积分
@@ -2675,41 +2664,6 @@ public class GenerationService {
         return response.getBody();
     }
 
-    /**
-     * 获取用户的生成记录（分页）
-     *
-     * @param page   页码
-     * @param size   每页数量
-     * @param userId 用户ID
-     * @param type   类型筛选（可选）
-     * @return 分页结果
-     */
-    public Page<GenerationRecord> getGenerationRecords(Integer page, Integer size, Long userId, String type) {
-        Page<GenerationRecord> pageParam = new Page<>(page, size);
-        QueryWrapper<GenerationRecord> wrapper = new QueryWrapper<>();
-        wrapper.eq("user_id", userId);
-
-        if (type != null && !type.isEmpty() && !"all".equals(type)) {
-            wrapper.eq("file_type", type);
-        }
-
-        wrapper.orderByDesc("created_at");
-
-        Page<GenerationRecord> result = generationRecordMapper.selectPage(pageParam, wrapper);
-
-        // 处理签名URL
-        if (result.getRecords() != null && !result.getRecords().isEmpty()) {
-            for (GenerationRecord record : result.getRecords()) {
-                record.setTitle(TitleUtil.generateTitle(record.getPrompt()));
-                record.setContentUrl(fileStorageService.getFileUrl(record.getContentUrl()));
-                record.setThumbnailUrl(fileStorageService.getFileUrl(record.getThumbnailUrl()));
-                // record.setReferenceImage(fileStorageService.getFileUrl(record.getReferenceImage()));
-                // // GenerationRecord entity doesn't have this field
-            }
-        }
-
-        return result;
-    }
 
     private Integer parseProgress(String p) {
         if (p == null)

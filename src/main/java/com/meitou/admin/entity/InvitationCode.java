@@ -45,6 +45,28 @@ public class InvitationCode {
      * 状态：active-有效，expired-已过期
      */
     private String status;
+
+    /**
+     * 类型：common-普通(积分), membership-会员
+     */
+    private String type;
+
+    /**
+     * 会员套餐ID（当type=membership时有效）
+     */
+    @TableField("package_id")
+    private Integer packageId;
+
+    /**
+     * 会员时长（当type=membership时有效）
+     */
+    private Integer duration;
+
+    /**
+     * 会员时长单位：day, month, year（当type=membership时有效）
+     */
+    @TableField("duration_unit")
+    private String durationUnit;
     
     /**
      * 站点ID（多租户字段）

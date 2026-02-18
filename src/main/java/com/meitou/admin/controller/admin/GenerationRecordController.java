@@ -1,5 +1,6 @@
 package com.meitou.admin.controller.admin;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.meitou.admin.annotation.SiteScope;
 import com.meitou.admin.common.Result;
 import com.meitou.admin.entity.GenerationRecord;
@@ -20,16 +21,21 @@ public class GenerationRecordController {
     private final GenerationRecordService recordService;
     
     /**
-     * 获取生成记录列表（按站点ID）
+     * 获取生成记录列表（按站点ID，分页）
      * 
      * @param siteId 站点ID（必传）：1=医美类，2=电商类，3=生活服务类
-     * @return 记录列表
+     * @param page 页码，默认1
+     * @param size 每页数量，默认10
+     * @return 记录分页
      */
     @GetMapping
     @SiteScope // 使用 AOP 自动处理 SiteContext
-    public Result<List<GenerationRecord>> getRecords(@RequestParam(required = true) Long siteId) {
+    public Result<Page<GenerationRecord>> getRecords(
+            @RequestParam(required = true) Long siteId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size) {
         // SiteContext 已由 @SiteScope 注解自动设置
-        List<GenerationRecord> records = recordService.getRecordsBySiteId(siteId);
+        Page<GenerationRecord> records = recordService.getRecordsBySiteId(siteId, page, size);
         return Result.success(records);
     }
     

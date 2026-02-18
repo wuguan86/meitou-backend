@@ -85,6 +85,10 @@ public class MybatisPlusConfig {
             if ("sites".equals(tableName)) {
                 return true;
             }
+            // 邀请码使用记录不需要多租户过滤（因为是基于ID唯一性校验）
+            if ("invitation_code_usages".equals(tableName)) {
+                return true;
+            }
             
             return false;
         }

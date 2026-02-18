@@ -76,12 +76,19 @@ public class MembershipOrderService {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "套餐价格配置异常");
         }
+        
+        Integer quantity = request.getQuantity();
+        if (quantity == null || quantity < 1) {
+            quantity = 1;
+        }
+        amount = amount.multiply(new BigDecimal(quantity));
 
         String orderNo = generateOrderNo(userId);
 
         MembershipPayload payload = new MembershipPayload();
         payload.packageId = request.getPackageId();
         payload.billingCycle = billingCycle;
+        payload.quantity = quantity;
 
         RechargeOrder order = new RechargeOrder();
         order.setOrderNo(orderNo);
@@ -162,6 +169,12 @@ public class MembershipOrderService {
             response.setActiveBillingCycle(active.getBillingCycle());
             response.setActiveEndAt(active.getEndAt());
             response.setCanSwitchType(active.getEndAt() == null || !active.getEndAt().isAfter(now));
+
+            MembershipPackage pkg = membershipPackageMapper.selectById(active.getPackageId());
+            if (pkg != null) {
+                response.setActivePackageName(pkg.getName());
+                response.setActivePrimaryColor(pkg.getPrimaryColor());
+            }
         } else {
             response.setCanSwitchType(true);
         }
@@ -186,6 +199,11 @@ public class MembershipOrderService {
         if (payload.packageId == null || payload.billingCycle == null) {
             throw new BusinessException(ErrorCode.MEMBERSHIP_ORDER_INVALID);
         }
+        
+        Integer quantity = payload.quantity;
+        if (quantity == null || quantity < 1) {
+            quantity = 1;
+        }
 
         MembershipPackage pkg = membershipPackageMapper.selectById(payload.packageId);
         if (pkg == null || Boolean.FALSE.equals(pkg.getIsActive())) {
@@ -193,42 +211,69 @@ public class MembershipOrderService {
         }
 
         LocalDateTime now = LocalDateTime.now();
-        UserMembershipPeriod active = findActiveMembership(order.getUserId(), now);
+        // 查找最后一个有效会员周期（包括active和scheduled），确保新购买的周期接在最后
+        UserMembershipPeriod lastPeriod = findLastMembership(order.getUserId());
 
         LocalDateTime startAt;
-        String status;
-        if (active != null && active.getEndAt() != null && active.getEndAt().isAfter(now)) {
-            if (active.getLevelCode() != null && !active.getLevelCode().equals(pkg.getLevelCode())) {
+        String initialStatus; // 整个批次的初始状态依据
+
+        if (lastPeriod != null && lastPeriod.getEndAt() != null && lastPeriod.getEndAt().isAfter(now)) {
+            if (lastPeriod.getLevelCode() != null && !lastPeriod.getLevelCode().equals(pkg.getLevelCode())) {
                 throw new BusinessException(ErrorCode.MEMBERSHIP_TYPE_SWITCH_NOT_ALLOWED);
             }
-            startAt = active.getEndAt();
-            status = "scheduled";
+            startAt = lastPeriod.getEndAt();
+            initialStatus = "scheduled";
         } else {
             startAt = now;
-            status = "active";
+            initialStatus = "active";
         }
 
-        LocalDateTime endAt = "YEARLY".equals(payload.billingCycle) ? startAt.plusYears(1) : startAt.plusMonths(1);
+        // 计算总月数
+        int totalMonths = "YEARLY".equals(payload.billingCycle) ? quantity * 12 : quantity;
+        
+        LocalDateTime currentStart = startAt;
+        
+        // 循环创建每个月的周期
+        for (int i = 0; i < totalMonths; i++) {
+            LocalDateTime currentEnd = currentStart.plusMonths(1);
+            
+            // 确定当前周期的状态：
+            // 1. 如果批次初始状态是 scheduled，则所有周期都是 scheduled
+            // 2. 如果批次初始状态是 active，则只有第一个周期(i=0)是 active，后续是 scheduled
+            String currentStatus;
+            if ("scheduled".equals(initialStatus)) {
+                currentStatus = "scheduled";
+            } else {
+                currentStatus = (i == 0) ? "active" : "scheduled";
+            }
 
-        UserMembershipPeriod period = new UserMembershipPeriod();
-        period.setUserId(order.getUserId());
-        period.setPackageId(payload.packageId);
-        period.setLevelCode(pkg.getLevelCode());
-        period.setBillingCycle(payload.billingCycle);
-        period.setStartAt(startAt);
-        period.setEndAt(endAt);
-        period.setStatus(status);
-        period.setOrderNo(order.getOrderNo());
-        period.setSiteId(SiteContext.getSiteId());
-        period.setCreatedAt(now);
-        period.setUpdatedAt(now);
-        period.setDeleted(0);
-        userMembershipPeriodMapper.insert(period);
+            UserMembershipPeriod period = new UserMembershipPeriod();
+            period.setUserId(order.getUserId());
+            period.setPackageId(payload.packageId);
+            period.setLevelCode(pkg.getLevelCode());
+            period.setBillingCycle(payload.billingCycle); // 保持购买时的周期标记(YEARLY/MONTHLY)
+            period.setStartAt(currentStart);
+            period.setEndAt(currentEnd);
+            period.setStatus(currentStatus);
+            period.setOrderNo(order.getOrderNo());
+            period.setSiteId(SiteContext.getSiteId());
+            period.setCreatedAt(now);
+            period.setUpdatedAt(now);
+            period.setDeleted(0);
+            userMembershipPeriodMapper.insert(period);
 
-        Integer reward = pkg.getPointsReward();
-        if ("active".equals(status) && reward != null && reward > 0) {
-            pointsLedgerService.grantExpiringPoints(order.getUserId(), reward, "MEMBERSHIP", order.getOrderNo(), endAt,
-                    "会员赠送算力-" + pkg.getLevelCode(), period.getId());
+            // 只有当前状态为 active 时才立即发放积分（后续 scheduled 的周期由定时任务发放）
+            if ("active".equals(currentStatus)) {
+                Integer reward = pkg.getPointsReward();
+                if (reward != null && reward > 0) {
+                    // 注意：这里不需要乘以 quantity，因为是按月发放
+                    pointsLedgerService.grantExpiringPoints(order.getUserId(), reward, "MEMBERSHIP", order.getOrderNo(), currentEnd,
+                            "会员赠送算力-" + pkg.getLevelCode(), period.getId());
+                }
+            }
+            
+            // 下一个周期的开始时间 = 当前周期的结束时间
+            currentStart = currentEnd;
         }
     }
 
@@ -237,6 +282,20 @@ public class MembershipOrderService {
         wrapper.eq(UserMembershipPeriod::getUserId, userId);
         wrapper.eq(UserMembershipPeriod::getDeleted, 0);
         return userMembershipPeriodMapper.selectCount(wrapper) > 0;
+    }
+
+   
+
+    private UserMembershipPeriod findLastMembership(Long userId) {
+        LambdaQueryWrapper<UserMembershipPeriod> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(UserMembershipPeriod::getUserId, userId);
+        // 查找 active 或 scheduled 的记录
+        wrapper.in(UserMembershipPeriod::getStatus, "active", "scheduled");
+        wrapper.eq(UserMembershipPeriod::getDeleted, 0);
+        // 按结束时间倒序，取最后一个
+        wrapper.orderByDesc(UserMembershipPeriod::getEndAt);
+        wrapper.last("LIMIT 1");
+        return userMembershipPeriodMapper.selectOne(wrapper);
     }
 
     private UserMembershipPeriod findActiveMembership(Long userId, LocalDateTime now) {
@@ -300,5 +359,6 @@ public class MembershipOrderService {
     private static class MembershipPayload {
         public Integer packageId;
         public String billingCycle;
+        public Integer quantity;
     }
 }

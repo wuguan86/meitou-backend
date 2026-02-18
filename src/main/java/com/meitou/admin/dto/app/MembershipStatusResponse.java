@@ -17,6 +17,10 @@ public class MembershipStatusResponse {
 
     private LocalDateTime activeEndAt;
 
+    private String activePackageName;
+
+    private String activePrimaryColor;
+
     private boolean canSwitchType;
 }
 

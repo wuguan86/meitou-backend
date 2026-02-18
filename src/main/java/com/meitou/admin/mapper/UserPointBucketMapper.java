@@ -17,17 +17,22 @@ public interface UserPointBucketMapper extends BaseMapper<UserPointBucket> {
     @Select("SELECT COUNT(1) FROM user_point_buckets WHERE user_id = #{userId} AND deleted = 0 LIMIT 1")
     int countByUserId(@Param("userId") Long userId);
 
+
+    @InterceptorIgnore(tenantLine = "true")
     @Select("""
             SELECT * FROM user_point_buckets
             WHERE user_id = #{userId}
               AND deleted = 0
               AND status = 'active'
               AND remaining_points > 0
-              AND (expires_at IS NULL OR expires_at > NOW())
+              AND (expires_at IS NULL OR expires_at > #{now})
+              AND site_id = #{siteId}
             ORDER BY (expires_at IS NULL) ASC, expires_at ASC, id ASC
             FOR UPDATE
             """)
-    List<UserPointBucket> selectActiveBucketsForUpdate(@Param("userId") Long userId);
+    List<UserPointBucket> selectBucketsForDeduct(@Param("userId") Long userId,
+                                                 @Param("siteId") Long siteId,
+                                                 @Param("now") LocalDateTime now);
 
     @Select("""
             SELECT COALESCE(SUM(remaining_points), 0)
