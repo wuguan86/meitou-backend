@@ -25,6 +25,16 @@ public class RechargeOrderQueryRequest {
      * 支付渠道：wechat, alipay, system
      */
     private String paymentType;
+
+    /**
+     * 订单状态：pending-待支付，paying-支付中，paid-已支付，cancelled-已取消，refunded-已退款，failed-支付失败
+     */
+    private String status;
+
+    /**
+     * 充值类型：points_recharge-算力充值，membership-会员购买/续费
+     */
+    private String productType;
     
     /**
      * 开始日期

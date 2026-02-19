@@ -26,6 +26,11 @@ public class PromptOptimizeRequest {
     private List<Map<String, Object>> messages;
 
     /**
+     * 图片列表 (图生图/图生视频时使用)
+     */
+    private List<String> images;
+
+    /**
      * 获取提示词内容 (从messages中提取)
      */
     @JsonIgnore

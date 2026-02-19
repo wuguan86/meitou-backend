@@ -171,14 +171,33 @@ public class MembershipOrderService {
             response.setCanSwitchType(active.getEndAt() == null || !active.getEndAt().isAfter(now));
 
             MembershipPackage pkg = membershipPackageMapper.selectById(active.getPackageId());
+            if (pkg == null) {
+                // 如果套餐已被删除，尝试忽略删除标记查询
+                pkg = membershipPackageMapper.selectByIdIgnoreDeleted(active.getPackageId().longValue());
+            }
             if (pkg != null) {
                 response.setActivePackageName(pkg.getName());
                 response.setActivePrimaryColor(pkg.getPrimaryColor());
+            } else {
+                // 如果仍然找不到套餐信息（可能是跨站点或数据异常），根据 levelCode 生成默认名称
+                response.setActivePackageName(getLevelName(active.getLevelCode()));
             }
         } else {
             response.setCanSwitchType(true);
         }
         return response;
+    }
+
+    private String getLevelName(String levelCode) {
+        if (levelCode == null) return "会员";
+        switch (levelCode) {
+            case "free": return "免费版";
+            case "standard": return "标准版";
+            case "pro": return "专业版";
+            case "flagship": return "旗舰版";
+            case "enterprise": return "企业版";
+            default: return "会员";
+        }
     }
 
     @Transactional

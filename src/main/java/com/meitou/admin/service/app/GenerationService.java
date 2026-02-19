@@ -1,20 +1,10 @@
 package com.meitou.admin.service.app;
 
 import com.meitou.admin.service.admin.PromptHelperConfigService;
-import com.meitou.admin.entity.PromptHelperConfig;
-import com.meitou.admin.dto.app.PromptOptimizeRequest;
 import com.meitou.admin.service.common.AliyunOssService;
 import com.meitou.admin.util.TitleUtil;
 import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.Call;
-import okhttp3.Callback;
-import okhttp3.RequestBody;
-import okhttp3.ResponseBody;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.concurrent.TimeUnit;
-import java.io.IOException;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -26,7 +16,6 @@ import com.meitou.admin.dto.app.TextToImageRequest;
 import com.meitou.admin.dto.app.TextToVideoRequest;
 import com.meitou.admin.dto.app.ImageToVideoRequest;
 import com.meitou.admin.dto.app.VideoGenerationResponse;
-import com.meitou.admin.entity.AnalysisRecord;
 import com.meitou.admin.entity.ApiInterface;
 import com.meitou.admin.entity.ApiParameterMapping;
 import com.meitou.admin.entity.ApiPlatform;
@@ -50,7 +39,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.client.ResourceAccessException;
 import java.net.SocketTimeoutException;
-
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -72,7 +60,7 @@ public class GenerationService {
     private final PointsLedgerService pointsLedgerService;
     private final com.meitou.admin.service.common.AliyunOssService aliyunOssService;
     private final FileStorageService fileStorageService;
-    private final PromptHelperConfigService promptHelperConfigService;
+
 
     private final OkHttpClient okHttpClient = new OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -107,7 +95,6 @@ public class GenerationService {
         this.aliyunOssService = aliyunOssService;
         this.transactionTemplate = transactionTemplate;
         this.fileStorageService = fileStorageService;
-        this.promptHelperConfigService = promptHelperConfigService;
 
         // 配置RestTemplate的超时时间
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -768,13 +755,7 @@ public class GenerationService {
         return "系统繁忙，请稍后再试";
     }
 
-    private String resolveUnknownPromptOptimizeError(Exception e) {
-        String message = e != null ? e.getMessage() : null;
-        if (message != null && message.contains("timed out")) {
-            return "生成请求超时，请稍后重试";
-        }
-        return "系统繁忙，请稍后再试";
-    }
+
 
     /**
      * 获取用户生成记录
@@ -1415,225 +1396,7 @@ public class GenerationService {
         failGenerationTask(record, failureReason);
     }
 
-    /**
-     * 提示词优化
-     */
-    public SseEmitter optimizePrompt(PromptOptimizeRequest request, Long userId) {
-        // 1. 查找平台
-        ApiPlatform platform = findPlatformByType("prompt_optimize", request.getModel(), null);
-        if (platform == null) {
-            throw new BusinessException(ErrorCode.GENERATION_PLATFORM_NOT_CONFIGURED.getCode(), "提示词优化平台未配置");
-        }
 
-        // 2. 查找接口
-        List<ApiInterface> interfaces = apiPlatformService.getInterfacesByPlatformId(platform.getId());
-        ApiInterface apiInterface = interfaces.stream()
-                .findFirst()
-                .orElse(null);
-
-        if (apiInterface == null) {
-            throw new BusinessException(ErrorCode.GENERATION_INTERFACE_NOT_CONFIGURED.getCode(), "提示词优化接口未配置");
-        }
-
-        // Save Analysis Record (Pending)
-        AnalysisRecord analysisRecord = new AnalysisRecord();
-        analysisRecord.setUserId(userId);
-        analysisRecord.setType("prompt");
-        analysisRecord.setContent(request.getPrompt());
-        analysisRecord.setStatus(0); // Pending
-        analysisRecord.setSiteId(SiteContext.getSiteId());
-        analysisRecordMapper.insert(analysisRecord);
-
-        // Deduct points
-        PromptHelperConfig config = promptHelperConfigService.getConfig();
-        int cost = (config != null && config.getComputeConsumption() != null) ? config.getComputeConsumption() : 20;
-        final int finalCost = cost;
-        
-        if (cost > 0) {
-            try {
-                pointsLedgerService.deduct(userId, cost, "prompt_optimization", analysisRecord.getId(), "提示词优化消耗");
-            } catch (Exception e) {
-                // Mark record as failed if deduction fails
-                analysisRecord.setStatus(2);
-                analysisRecord.setErrorMsg("余额不足或扣费失败: " + e.getMessage());
-                analysisRecordMapper.updateById(analysisRecord);
-                throw e;
-            }
-        }
-
-        // 3. 构建请求
-        SseEmitter emitter = new SseEmitter(60000L); // 1 minute timeout
-
-        try {
-            okhttp3.MediaType JSON = okhttp3.MediaType.get("application/json; charset=utf-8");
-            String jsonBody = objectMapper.writeValueAsString(request);
-            RequestBody body = RequestBody.create(jsonBody, JSON);
-
-            Request.Builder requestBuilder = new Request.Builder()
-                    .url(apiInterface.getUrl())
-                    .post(body);
-
-            // Add headers
-            if (apiInterface.getHeaders() != null) {
-                try {
-                    JsonNode headersNode = objectMapper.readTree(apiInterface.getHeaders());
-                    headersNode.fields().forEachRemaining(entry -> {
-                        String key = entry.getKey();
-                        String value = entry.getValue().asText();
-                        if (value.contains("{apiKey}") && platform.getApiKey() != null) {
-                            value = value.replace("{apiKey}", platform.getApiKey());
-                        }
-                        requestBuilder.addHeader(key, value);
-                    });
-                } catch (Exception e) {
-                    log.warn("解析headers失败", e);
-                }
-            }
-
-            // Ensure Authorization header if not present
-            if (platform.getApiKey() != null && !platform.getApiKey().isEmpty()) {
-                requestBuilder.header("Authorization", "Bearer " + platform.getApiKey());
-            }
-
-            Request okRequest = requestBuilder.build();
-
-            // 4. Execute
-            okHttpClient.newCall(okRequest).enqueue(new Callback() {
-                @Override
-                public void onFailure(Call call, IOException e) {
-                    // Update Analysis Record (Failed)
-                    analysisRecord.setStatus(2);
-                    String errorMsg = resolveUnknownPromptOptimizeError(e);
-                    analysisRecord.setErrorMsg(errorMsg);
-                    analysisRecordMapper.updateById(analysisRecord);
-
-                    if (finalCost > 0) {
-                        pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
-                    }
-
-                    try {
-                        emitter.send(SseEmitter.event().name("error").data(errorMsg));
-                        emitter.complete();
-                    } catch (Exception ex) {
-                        log.error("Error completing emitter", ex);
-                    }
-                }
-
-                @Override
-                public void onResponse(Call call, Response response) throws IOException {
-                    StringBuilder fullResponse = new StringBuilder();
-                    try (ResponseBody responseBody = response.body()) {
-                        if (!response.isSuccessful()) {
-                            // Update Analysis Record (Failed)
-                            analysisRecord.setStatus(2);
-                            String errorMsg = "系统繁忙，请稍后再试";
-                            analysisRecord.setErrorMsg(errorMsg);
-                            analysisRecordMapper.updateById(analysisRecord);
-
-                            if (finalCost > 0) {
-                                pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
-                            }
-
-                            emitter.send(SseEmitter.event().name("error").data(errorMsg));
-                            emitter.complete();
-                            return;
-                        }
-
-                        if (responseBody == null) {
-                            // Update Analysis Record (Failed)
-                            analysisRecord.setStatus(2);
-                            String errorMsg = "系统繁忙，请稍后再试";
-                            analysisRecord.setErrorMsg(errorMsg);
-                            analysisRecordMapper.updateById(analysisRecord);
-                            
-                            if (finalCost > 0) {
-                                pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
-                            }
-                            
-                            emitter.send(SseEmitter.event().name("error").data(errorMsg));
-                            emitter.complete();
-                            return;
-                        }
-
-                        // Stream the response
-                        okio.BufferedSource source = responseBody.source();
-                        boolean isSuccess = false;
-                        while (!source.exhausted()) {
-                            String line = source.readUtf8Line();
-                            if (line != null && !line.isEmpty()) {
-                                if (line.startsWith("data: ")) {
-                                    String data = line.substring(6);
-                                    if ("[DONE]".equals(data.trim())) {
-                                        // Update Analysis Record (Success)
-                                        analysisRecord.setStatus(1);
-                                        analysisRecord.setResult(fullResponse.toString());
-                                        analysisRecordMapper.updateById(analysisRecord);
-                                        isSuccess = true;
-                                        continue;
-                                    }
-                                    fullResponse.append(data);
-                                    emitter.send(data);
-                                }
-                            }
-                        }
-                        
-                        // If finished without [DONE] but gathered data, mark as success
-                        if (!isSuccess && fullResponse.length() > 0) {
-                             analysisRecord.setStatus(1);
-                             analysisRecord.setResult(fullResponse.toString());
-                             analysisRecordMapper.updateById(analysisRecord);
-                        } else if (!isSuccess) {
-                            // No data received and no [DONE], mark as failed
-                            analysisRecord.setStatus(2);
-                            String errorMsg = "系统繁忙，请稍后再试";
-                            analysisRecord.setErrorMsg(errorMsg);
-                            analysisRecordMapper.updateById(analysisRecord);
-                            
-                            if (finalCost > 0) {
-                                pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
-                            }
-
-                            emitter.send(SseEmitter.event().name("error").data(errorMsg));
-                        }
-
-                        emitter.complete();
-                    } catch (Exception e) {
-                        // Update Analysis Record (Failed)
-                        analysisRecord.setStatus(2);
-                        String errorMsg = resolveUnknownPromptOptimizeError(e);
-                        analysisRecord.setErrorMsg(errorMsg);
-                        analysisRecordMapper.updateById(analysisRecord);
-
-                        if (finalCost > 0) {
-                            pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
-                        }
-
-                        emitter.send(SseEmitter.event().name("error").data(errorMsg));
-                        emitter.complete();
-                    }
-                }
-            });
-
-        } catch (Exception e) {
-            // Update Analysis Record (Failed)
-            analysisRecord.setStatus(2);
-            String errorMsg = resolveUnknownPromptOptimizeError(e);
-            analysisRecord.setErrorMsg(errorMsg);
-            analysisRecordMapper.updateById(analysisRecord);
-
-            if (finalCost > 0) {
-                pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
-            }
-
-            try {
-                emitter.send(SseEmitter.event().name("error").data(errorMsg));
-            } catch (Exception ignored) {
-            }
-            emitter.complete();
-        }
-
-        return emitter;
-    }
 
     /**
      * 根据类型和模型查找API平台（apiKey已解密）

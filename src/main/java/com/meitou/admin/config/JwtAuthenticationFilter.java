@@ -61,23 +61,21 @@ public class JwtAuthenticationFilter extends GenericFilterBean {
 
         // 无论 SecurityContext 是否已有认证，我们都重新设置，确保 Async 场景下有上下文
         // 注意：SecurityContextHolder 默认是 ThreadLocal 的
-        if (SecurityContextHolder.getContext().getAuthentication() == null) {
-            // Token 有效，设置 SecurityContext
-            
-            List<SimpleGrantedAuthority> authorities = new ArrayList<>();
-            if (type != null) {
-                // 将 type 转换为角色，例如 user -> ROLE_USER, admin -> ROLE_ADMIN
-                authorities.add(new SimpleGrantedAuthority("ROLE_" + type.toUpperCase()));
-            } else {
-                // 默认为 USER 角色
-                authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
-            }
-            
-            UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                    userId, null, authorities);
-            
-            SecurityContextHolder.getContext().setAuthentication(authToken);
+        // Token 有效，设置 SecurityContext
+        
+        List<SimpleGrantedAuthority> authorities = new ArrayList<>();
+        if (type != null) {
+            // 将 type 转换为角色，例如 user -> ROLE_USER, admin -> ROLE_ADMIN
+            authorities.add(new SimpleGrantedAuthority("ROLE_" + type.toUpperCase()));
+        } else {
+            // 默认为 USER 角色
+            authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
         }
+        
+        UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                userId, null, authorities);
+        
+        SecurityContextHolder.getContext().setAuthentication(authToken);
         
         filterChain.doFilter(request, response);
     }

@@ -64,7 +64,7 @@ public class RechargeOrderController {
             try (java.io.OutputStreamWriter osw = new java.io.OutputStreamWriter(os, java.nio.charset.StandardCharsets.UTF_8);
                  java.io.PrintWriter writer = new java.io.PrintWriter(osw)) {
                  
-                writer.println("充值时间,用户,手机号,充值金额,获得积分,支付渠道,状态,订单号");
+                writer.println("充值时间,用户,手机号,充值类型,充值金额,获得积分,支付渠道,状态,订单号");
 
                 java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -75,6 +75,10 @@ public class RechargeOrderController {
                     String phone = (order.getUser() != null && order.getUser().getPhone() != null) ? "\t" + order.getUser().getPhone() : "";
                     String amount = order.getAmount() != null ? order.getAmount().toString() : "0";
                     String points = order.getPoints() != null ? order.getPoints().toString() : "0";
+                    
+                    String productType = order.getProductType();
+                    if ("points_recharge".equals(productType)) productType = "算力充值";
+                    else if ("membership".equals(productType)) productType = "会员购买";
                     
                     String paymentType = order.getPaymentType();
                     if ("wechat".equals(paymentType)) paymentType = "微信支付";
@@ -92,7 +96,7 @@ public class RechargeOrderController {
                     String orderNo = order.getOrderNo() != null ? "\t" + order.getOrderNo() : "";
                     username = escapeCsv(username);
                     
-                    writer.println(String.join(",", time, username, phone, amount, points, paymentType, status, orderNo));
+                    writer.println(String.join(",", time, username, phone, productType, amount, points, paymentType, status, orderNo));
                 }
                 writer.flush();
             }

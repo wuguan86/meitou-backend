@@ -16,7 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
 
 import java.util.ArrayList;
 import java.util.List;
@@ -130,16 +130,7 @@ public class GenerationController {
         return Result.success(response);
     }
 
-    /**
-     * 提示词优化
-     */
-    @PostMapping("/prompt-optimize")
-    public SseEmitter optimizePrompt(
-            @RequestBody PromptOptimizeRequest request,
-            @AuthenticationPrincipal Long userId) {
-        log.info("用户[{}]发起提示词优化请求", userId);
-        return generationService.optimizePrompt(request, userId);
-    }
+
 
     /**
      * 获取文生图模型列表

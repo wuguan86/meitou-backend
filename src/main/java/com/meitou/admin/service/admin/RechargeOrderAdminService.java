@@ -123,6 +123,16 @@ public class RechargeOrderAdminService extends ServiceImpl<RechargeOrderMapper, 
         if (StringUtils.hasText(request.getPaymentType()) && !"全部".equals(request.getPaymentType())) {
             wrapper.eq("payment_type", request.getPaymentType().toLowerCase());
         }
+
+        // 支付状态
+        if (StringUtils.hasText(request.getStatus()) && !"全部".equals(request.getStatus())) {
+            wrapper.eq("status", request.getStatus());
+        }
+
+        // 充值类型
+        if (StringUtils.hasText(request.getProductType()) && !"全部".equals(request.getProductType())) {
+            wrapper.eq("product_type", request.getProductType());
+        }
         
         // 日期范围
         if (request.getStartDate() != null) {

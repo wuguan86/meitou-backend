@@ -7,6 +7,8 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
+import java.util.List;
+
 /**
  * 充值订单 Mapper 接口
  */
@@ -43,4 +45,26 @@ public interface RechargeOrderMapper extends BaseMapper<RechargeOrder> {
             "AND status != 'paid' " + // 关键：只有非paid状态才能更新
             "AND deleted = 0")
     int updateToPaidIfNotPaid(RechargeOrder order);
+
+    /**
+     * 查询超时未支付的订单（忽略多租户过滤）
+     * 
+     * @param threshold 时间阈值
+     * @param limit     限制数量
+     * @return 订单列表
+     */
+    @InterceptorIgnore(tenantLine = "true")
+    @Select("SELECT * FROM recharge_orders WHERE status IN ('pending', 'paying') AND created_at < #{threshold} AND deleted = 0 LIMIT #{limit}")
+    List<RechargeOrder> selectPendingOrPayingBefore(@Param("threshold") java.time.LocalDateTime threshold, @Param("limit") int limit);
+
+    /**
+     * 更新订单状态为已取消（忽略多租户过滤）
+     * 
+     * @param id 订单ID
+     * @param updatedAt 更新时间
+     * @return 更新行数
+     */
+    @InterceptorIgnore(tenantLine = "true")
+    @org.apache.ibatis.annotations.Update("UPDATE recharge_orders SET status = 'cancelled', updated_at = #{updatedAt} WHERE id = #{id} AND status IN ('pending', 'paying') AND deleted = 0")
+    int updateToCancelled(@Param("id") Long id, @Param("updatedAt") java.time.LocalDateTime updatedAt);
 }

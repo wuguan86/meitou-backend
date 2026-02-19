@@ -79,4 +79,9 @@ public class AnalysisRecord {
      */
     @TableField("site_id")
     private Long siteId;
+
+    /**
+     * 额外信息（JSON格式，如参考图片列表）
+     */
+    private String extra;
 }
