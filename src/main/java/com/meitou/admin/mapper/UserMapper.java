@@ -42,6 +42,13 @@ public interface UserMapper extends BaseMapper<User> {
     List<User> selectListIgnoreTenant(@Param(Constants.WRAPPER) Wrapper<User> queryWrapper);
 
     /**
+     * 忽略多租户插件根据ID查询
+     */
+    @Select("SELECT * FROM users WHERE id = #{id} LIMIT 1")
+    @InterceptorIgnore(tenantLine = "true")
+    User selectByIdIgnoreTenant(@Param("id") Long id);
+
+    /**
      * 扣减用户余额
      * @param userId 用户ID
      * @param cost 消耗积分

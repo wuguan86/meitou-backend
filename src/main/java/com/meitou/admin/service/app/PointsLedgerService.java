@@ -34,9 +34,13 @@ public class PointsLedgerService {
         if (order == null || order.getUserId() == null || order.getPoints() == null || order.getPoints() <= 0) {
             throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "充值订单参数无效");
         }
+        
+        // Ensure context matches the user's site
+        User user = ensureSiteContext(order.getUserId());
+        
         ensureLegacyBucket(order.getUserId());
 
-        Long siteId = SiteContext.getSiteId();
+        Long siteId = user.getSiteId();
         if (siteId == null) {
             throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "站点信息缺失");
         }
@@ -92,8 +96,12 @@ public class PointsLedgerService {
         if (userId == null || cost < 0) {
             throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "扣减参数无效");
         }
+        
+        // Ensure context matches the user's site
+        ensureSiteContext(userId);
+
         if (cost == 0) {
-            User user = userMapper.selectById(userId);
+            User user = userMapper.selectByIdIgnoreTenant(userId);
             return user != null && user.getBalance() != null ? user.getBalance() : 0;
         }
 
@@ -172,6 +180,9 @@ public class PointsLedgerService {
         if (userId == null || businessId == null) {
             throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "退款参数无效");
         }
+        
+        // Ensure context matches the user's site
+        ensureSiteContext(userId);
 
         LambdaQueryWrapper<UserTransaction> alreadyRefunded = new LambdaQueryWrapper<>();
         alreadyRefunded.eq(UserTransaction::getUserId, userId);
@@ -265,9 +276,13 @@ public class PointsLedgerService {
         if (userId == null || points <= 0) {
             throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "积分发放参数无效");
         }
+        
+        // Ensure context matches the user's site
+        User user = ensureSiteContext(userId);
+        
         ensureLegacyBucket(userId);
 
-        Long siteId = SiteContext.getSiteId();
+        Long siteId = user.getSiteId();
         if (siteId == null) {
             throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "站点信息缺失");
         }
@@ -322,9 +337,13 @@ public class PointsLedgerService {
         if (expiresAt == null) {
             throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "过期时间不能为空");
         }
+        
+        // Ensure context matches the user's site
+        User user = ensureSiteContext(userId);
+        
         ensureLegacyBucket(userId);
 
-        Long siteId = SiteContext.getSiteId();
+        Long siteId = user.getSiteId();
         if (siteId == null) {
             throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "站点信息缺失");
         }
@@ -374,7 +393,7 @@ public class PointsLedgerService {
         if (userPointBucketMapper.countByUserId(userId) > 0) {
             return;
         }
-        User user = userMapper.selectById(userId);
+        User user = userMapper.selectByIdIgnoreTenant(userId);
         if (user == null) {
             throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
@@ -383,7 +402,7 @@ public class PointsLedgerService {
             return;
         }
 
-        Long siteId = SiteContext.getSiteId();
+        Long siteId = user.getSiteId();
         if (siteId == null) {
             throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "站点信息缺失");
         }
@@ -404,5 +423,24 @@ public class PointsLedgerService {
         bucket.setUpdatedAt(now);
         bucket.setDeleted(0);
         userPointBucketMapper.insert(bucket);
+    }
+
+    private User ensureSiteContext(Long userId) {
+        if (userId == null) {
+            return null;
+        }
+        // Always fetch user ignoring tenant to ensure we find them
+        User user = userMapper.selectByIdIgnoreTenant(userId);
+        if (user == null) {
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+        }
+        
+        Long currentSiteId = SiteContext.getSiteId();
+        // If context is missing or mismatches the user's site, update it.
+        // This is crucial for Admin operations (site=0) on specific tenant users.
+        if (currentSiteId == null || !currentSiteId.equals(user.getSiteId())) {
+             SiteContext.setSiteId(user.getSiteId());
+        }
+        return user;
     }
 }

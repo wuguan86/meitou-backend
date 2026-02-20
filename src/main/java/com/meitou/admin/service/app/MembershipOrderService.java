@@ -212,6 +212,15 @@ public class MembershipOrderService {
         if (order == null || order.getUserId() == null || order.getOrderNo() == null) {
             throw new BusinessException(ErrorCode.MEMBERSHIP_ORDER_INVALID);
         }
+
+        // Ensure context matches the order's site (crucial for cross-tenant operations like admin manual processing)
+        if (order.getSiteId() != null) {
+            Long currentSiteId = SiteContext.getSiteId();
+            if (currentSiteId == null || !currentSiteId.equals(order.getSiteId())) {
+                SiteContext.setSiteId(order.getSiteId());
+            }
+        }
+
         if (order.getProductPayload() == null || order.getProductPayload().isBlank()) {
             throw new BusinessException(ErrorCode.MEMBERSHIP_ORDER_INVALID);
         }

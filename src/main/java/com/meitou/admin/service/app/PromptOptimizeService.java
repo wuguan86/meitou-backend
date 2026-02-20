@@ -115,7 +115,12 @@ public class PromptOptimizeService {
         }
 
         // 3. 构建请求
-        SseEmitter emitter = new SseEmitter(60000L); // 1 minute timeout
+        // Set timeout to 3 minutes (180000ms) to accommodate long generation times and avoid race conditions with OkHttp timeout (60s)
+        SseEmitter emitter = new SseEmitter(180000L); 
+
+        // Handle timeout and completion to avoid "ResponseBodyEmitter has already completed" errors
+        emitter.onTimeout(emitter::complete);
+        emitter.onError((e) -> emitter.complete());
 
         try {
             // 处理图片输入：如果有图片，需要重新构建messages
@@ -174,8 +179,9 @@ public class PromptOptimizeService {
                     try {
                         emitter.send(SseEmitter.event().name("error").data(errorMsg));
                         emitter.complete();
-                    } catch (IOException ex) {
-                        log.error("发送SSE错误信息失败", ex);
+                    } catch (Exception ex) {
+                        // Log but ignore if emitter is already completed
+                        log.warn("Failed to send SSE error message (likely client disconnected or timed out): {}", ex.getMessage());
                     }
                 }
 
@@ -200,8 +206,12 @@ public class PromptOptimizeService {
                                 pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
                             }
 
-                            emitter.send(SseEmitter.event().name("error").data(errorMsg));
-                            emitter.complete();
+                            try {
+                                emitter.send(SseEmitter.event().name("error").data(errorMsg));
+                                emitter.complete();
+                            } catch (Exception ex) {
+                                log.warn("Failed to send SSE error message: {}", ex.getMessage());
+                            }
                             return;
                         }
 
@@ -216,8 +226,12 @@ public class PromptOptimizeService {
                                 pointsLedgerService.refund(userId, "prompt_optimization", analysisRecord.getId(), "提示词优化失败退款");
                             }
 
-                            emitter.send(SseEmitter.event().name("error").data(errorMsg));
-                            emitter.complete();
+                            try {
+                                emitter.send(SseEmitter.event().name("error").data(errorMsg));
+                                emitter.complete();
+                            } catch (Exception ex) {
+                                log.warn("Failed to send SSE error message: {}", ex.getMessage());
+                            }
                             return;
                         }
 
@@ -287,7 +301,7 @@ public class PromptOptimizeService {
                         try {
                             emitter.send(SseEmitter.event().name("error").data("处理响应失败"));
                             emitter.complete();
-                        } catch (IOException ex) {
+                        } catch (Exception ex) {
                             // ignore
                         }
                     }
