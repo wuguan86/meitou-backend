@@ -10,9 +10,10 @@ import com.meitou.admin.entity.User;
 import com.meitou.admin.entity.UserTransaction;
 import com.meitou.admin.exception.BusinessException;
 import com.meitou.admin.exception.ErrorCode;
-import com.meitou.admin.mapper.PublishedContentMapper;
-import com.meitou.admin.mapper.UserMapper;
-import com.meitou.admin.mapper.UserTransactionMapper;
+import com.meitou.admin.entity.MembershipPackage;
+import com.meitou.admin.entity.UserMembershipPeriod;
+import com.meitou.admin.entity.UserPointBucket;
+import com.meitou.admin.mapper.*;
 import com.meitou.admin.service.app.PointsLedgerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -21,6 +22,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 管理端用户服务类
@@ -35,6 +39,9 @@ public class UserService extends ServiceImpl<UserMapper, User> {
     private final BCryptPasswordEncoder passwordEncoder; // 密码编码器（通过依赖注入）
     private final PublishedContentMapper publishedContentMapper;
     private final PointsLedgerService pointsLedgerService;
+    private final UserMembershipPeriodMapper userMembershipPeriodMapper;
+    private final MembershipPackageMapper membershipPackageMapper;
+    private final UserPointBucketMapper userPointBucketMapper;
     
     /**
      * 获取用户列表（支持站点ID和搜索，分页）
@@ -59,7 +66,110 @@ public class UserService extends ServiceImpl<UserMapper, User> {
         wrapper.orderByDesc(User::getCreatedAt);
         
         Page<User> pageParam = new Page<>(page, size);
-        return userMapper.selectPage(pageParam, wrapper);
+        IPage<User> result = userMapper.selectPage(pageParam, wrapper);
+
+        // --- 填充扩展字段 (会员信息、积分明细) ---
+        List<User> users = result.getRecords();
+        if (users.isEmpty()) {
+            return result;
+        }
+
+        List<Long> userIds = users.stream().map(User::getId).collect(Collectors.toList());
+        LocalDateTime now = LocalDateTime.now();
+
+        // 1. 获取活跃会员周期
+        // 查找条件：userId IN userIds AND status = 'active' AND end_at > now
+        // 按照结束时间倒序排列，取最晚过期的
+        LambdaQueryWrapper<UserMembershipPeriod> periodWrapper = new LambdaQueryWrapper<>();
+        periodWrapper.in(UserMembershipPeriod::getUserId, userIds);
+        periodWrapper.eq(UserMembershipPeriod::getStatus, "active");
+        periodWrapper.gt(UserMembershipPeriod::getEndAt, now);
+        if (siteId != null) {
+            periodWrapper.eq(UserMembershipPeriod::getSiteId, siteId);
+        }
+        periodWrapper.orderByDesc(UserMembershipPeriod::getEndAt);
+
+        List<UserMembershipPeriod> activePeriods = userMembershipPeriodMapper.selectList(periodWrapper);
+
+        // Map: userId -> Period (保留结束时间最晚的一个)
+        Map<Long, UserMembershipPeriod> userPeriodMap = activePeriods.stream()
+                .collect(Collectors.toMap(
+                        UserMembershipPeriod::getUserId,
+                        p -> p,
+                        (existing, replacement) -> existing
+                ));
+
+        // 获取套餐名称
+        List<Integer> packageIds = activePeriods.stream()
+                .map(UserMembershipPeriod::getPackageId)
+                .distinct()
+                .collect(Collectors.toList());
+
+        Map<Integer, String> packageNameMap;
+        if (!packageIds.isEmpty()) {
+            List<MembershipPackage> packages = membershipPackageMapper.selectBatchIds(packageIds);
+            packageNameMap = packages.stream()
+                    .collect(Collectors.toMap(MembershipPackage::getId, MembershipPackage::getName));
+        } else {
+            packageNameMap = Map.of();
+        }
+
+        // 2. 获取积分桶明细
+        // 查找条件：userId IN userIds AND deleted=0 AND status='active' AND remaining_points > 0
+        // AND (expires_at IS NULL OR expires_at > now)
+        LambdaQueryWrapper<UserPointBucket> bucketWrapper = new LambdaQueryWrapper<>();
+        bucketWrapper.in(UserPointBucket::getUserId, userIds);
+        bucketWrapper.eq(UserPointBucket::getDeleted, 0);
+        bucketWrapper.eq(UserPointBucket::getStatus, "active");
+        bucketWrapper.gt(UserPointBucket::getRemainingPoints, 0);
+        bucketWrapper.and(w -> w.isNull(UserPointBucket::getExpiresAt).or().gt(UserPointBucket::getExpiresAt, now));
+        if (siteId != null) {
+            bucketWrapper.eq(UserPointBucket::getSiteId, siteId);
+        }
+
+        List<UserPointBucket> buckets = userPointBucketMapper.selectList(bucketWrapper);
+
+        // Map: userId -> List<Bucket>
+        Map<Long, List<UserPointBucket>> userBucketsMap = buckets.stream()
+                .collect(Collectors.groupingBy(UserPointBucket::getUserId));
+
+        // 3. 赋值给 User 对象
+        for (User user : users) {
+            // 会员信息
+            UserMembershipPeriod period = userPeriodMap.get(user.getId());
+            if (period != null) {
+                user.setMembershipExpireAt(period.getEndAt());
+                String pkgName = packageNameMap.get(period.getPackageId());
+                user.setMembershipName(pkgName != null ? pkgName : period.getLevelCode());
+            } else {
+                user.setMembershipName("免费用户");
+                user.setMembershipExpireAt(null);
+            }
+
+            // 积分明细
+            List<UserPointBucket> userBuckets = userBucketsMap.getOrDefault(user.getId(), List.of());
+            int membershipPoints = 0;
+            int giftPoints = 0;
+            int computePoints = 0;
+
+            for (UserPointBucket bucket : userBuckets) {
+                String source = bucket.getSourceType();
+                if ("MEMBERSHIP".equals(source)) {
+                    membershipPoints += bucket.getRemainingPoints();
+                } else if ("SYSTEM".equals(source) || "INVITATION".equals(source) || "REGISTER_GIFT".equals(source)) {
+                    giftPoints += bucket.getRemainingPoints();
+                } else {
+                    // RECHARGE, LEGACY, etc.
+                    computePoints += bucket.getRemainingPoints();
+                }
+            }
+
+            user.setBalanceMembership(membershipPoints);
+            user.setBalanceGift(giftPoints);
+            user.setBalanceCompute(computePoints);
+        }
+        
+        return result;
     }
     
     /**

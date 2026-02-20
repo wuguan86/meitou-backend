@@ -93,5 +93,37 @@ public class User {
      */
     @TableLogic
     private Integer deleted;
+
+    // --- Transient fields for UI display ---
+
+    /**
+     * 会员等级名称
+     */
+    @TableField(exist = false)
+    private String membershipName;
+
+    /**
+     * 会员到期时间
+     */
+    @TableField(exist = false)
+    private LocalDateTime membershipExpireAt;
+
+    /**
+     * 会员余额
+     */
+    @TableField(exist = false)
+    private Integer balanceMembership;
+
+    /**
+     * 算力余额 (充值/其他)
+     */
+    @TableField(exist = false)
+    private Integer balanceCompute;
+
+    /**
+     * 系统赠送余额
+     */
+    @TableField(exist = false)
+    private Integer balanceGift;
 }
 

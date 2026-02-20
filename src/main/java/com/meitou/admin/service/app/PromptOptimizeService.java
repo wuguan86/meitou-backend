@@ -48,6 +48,20 @@ public class PromptOptimizeService {
     public SseEmitter optimizePrompt(PromptOptimizeRequest request, Long userId) {
         // 1. 查找平台
         ApiPlatform platform = apiPlatformService.getPlatformByTypeAndModel("prompt_optimize", request.getModel(), null);
+
+        // 如果未找到指定模型的平台，且请求的是默认模型(gpt-4o-mini)或空，则尝试使用第一个可用的提示词优化平台
+        if (platform == null && (request.getModel() == null || request.getModel().isEmpty() || "gpt-4o-mini".equals(request.getModel()))) {
+            List<ApiPlatform> platforms = apiPlatformService.getPlatformsByTypeWithDecryptedKey("prompt_optimize", null);
+            if (!platforms.isEmpty()) {
+                platform = platforms.get(0);
+                // 更新请求中的模型名为平台支持的第一个模型
+                String firstModel = getFirstSupportedModel(platform.getSupportedModels());
+                if (firstModel != null) {
+                    request.setModel(firstModel);
+                }
+            }
+        }
+
         if (platform == null) {
             throw new BusinessException(ErrorCode.GENERATION_PLATFORM_NOT_CONFIGURED.getCode(), "提示词优化平台未配置");
         }
@@ -121,11 +135,12 @@ public class PromptOptimizeService {
             if (apiInterface.getHeaders() != null) {
                 try {
                     JsonNode headersNode = objectMapper.readTree(apiInterface.getHeaders());
+                    final ApiPlatform finalPlatform = platform;
                     headersNode.fields().forEachRemaining(entry -> {
                         String key = entry.getKey();
                         String value = entry.getValue().asText();
-                        if (value.contains("{apiKey}") && platform.getApiKey() != null) {
-                            value = value.replace("{apiKey}", platform.getApiKey());
+                        if (value.contains("{apiKey}") && finalPlatform.getApiKey() != null) {
+                            value = value.replace("{apiKey}", finalPlatform.getApiKey());
                         }
                         requestBuilder.addHeader(key, value);
                     });
@@ -167,6 +182,12 @@ public class PromptOptimizeService {
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
                     StringBuilder fullResponse = new StringBuilder();
+                    
+                    // State for thinking process filtering
+                    // Using array to allow modification inside lambda/anonymous class
+                    boolean[] isThinking = {false};
+                    StringBuilder contentBuffer = new StringBuilder();
+
                     try (ResponseBody responseBody = response.body()) {
                         if (!response.isSuccessful()) {
                             // Update Analysis Record (Failed)
@@ -200,45 +221,54 @@ public class PromptOptimizeService {
                             return;
                         }
 
-                        // Stream processing
+                        // Robust stream processing
                         okio.BufferedSource source = responseBody.source();
+                        boolean isFinished = false;
+                        StringBuilder lineBuffer = new StringBuilder();
+                        byte[] buffer = new byte[8192];
+
                         while (!source.exhausted()) {
-                            String line = source.readUtf8Line();
-                            if (line != null) {
-                                if (line.startsWith("data: ")) {
-                                    String data = line.substring(6).trim();
-                                    if ("[DONE]".equals(data)) {
-                                        break;
-                                    }
-                                    try {
-                                        JsonNode node = objectMapper.readTree(data);
-                                        if (node.has("choices") && node.get("choices").isArray() && node.get("choices").size() > 0) {
-                                            JsonNode choice = node.get("choices").get(0);
-                                            if (choice.has("delta") && choice.get("delta").has("content")) {
-                                                String content = choice.get("delta").get("content").asText();
-                                                fullResponse.append(content);
-                                                
-                                                // Wrap content in OpenAI-compatible JSON structure for frontend
-                                                Map<String, Object> delta = new HashMap<>();
-                                                delta.put("content", content);
-                                                
-                                                Map<String, Object> choiceMap = new HashMap<>();
-                                                choiceMap.put("delta", delta);
-                                                
-                                                List<Map<String, Object>> choices = new ArrayList<>();
-                                                choices.add(choiceMap);
-                                                
-                                                Map<String, Object> chunk = new HashMap<>();
-                                                chunk.put("choices", choices);
-                                                
-                                                emitter.send(SseEmitter.event().data(objectMapper.writeValueAsString(chunk)));
-                                            }
+                            int read = source.read(buffer);
+                            if (read == -1) break;
+
+                            String chunk = new String(buffer, 0, read);
+                            lineBuffer.append(chunk);
+
+                            int newlineIndex;
+                            while ((newlineIndex = lineBuffer.indexOf("\n")) != -1) {
+                                String line = lineBuffer.substring(0, newlineIndex).trim();
+                                lineBuffer.delete(0, newlineIndex + 1);
+
+                                if (line.isEmpty() || line.startsWith(":") || line.startsWith("event:") || line.startsWith("id:") || line.startsWith("retry:")) {
+                                    continue;
+                                }
+
+                                String payload = line.startsWith("data:") ? line.substring(5).trim() : line;
+                                
+                                if ("[DONE]".equals(payload)) {
+                                    isFinished = true;
+                                    break;
+                                }
+
+                                try {
+                                    JsonNode node = objectMapper.readTree(payload);
+                                    if (node.has("choices") && node.get("choices").isArray() && node.get("choices").size() > 0) {
+                                        JsonNode choice = node.get("choices").get(0);
+                                        if (choice.has("delta") && choice.get("delta").has("content")) {
+                                            String content = choice.get("delta").get("content").asText();
+                                            processContent(content, contentBuffer, isThinking, emitter, fullResponse, objectMapper);
                                         }
-                                    } catch (Exception e) {
-                                        // Ignore parsing errors for non-JSON lines
                                     }
+                                } catch (Exception e) {
+                                    // Ignore parsing errors for non-JSON lines
                                 }
                             }
+                            if (isFinished) break;
+                        }
+                        
+                        // Process any remaining content in buffer (if not thinking)
+                        if (!isThinking[0] && contentBuffer.length() > 0) {
+                             sendToClient(contentBuffer.toString(), emitter, fullResponse, objectMapper);
                         }
 
                         // Update Analysis Record (Success)
@@ -253,9 +283,6 @@ public class PromptOptimizeService {
                         analysisRecord.setStatus(2);
                         analysisRecord.setErrorMsg("处理响应失败: " + e.getMessage());
                         analysisRecordMapper.updateById(analysisRecord);
-                        
-                        // 注意：这里可能无法退款，因为已经开始处理响应了，但如果还没发送过任何数据，理论上可以退款
-                        // 这里简化处理，不退款，因为可能已经部分成功
                         
                         try {
                             emitter.send(SseEmitter.event().name("error").data("处理响应失败"));
@@ -324,5 +351,101 @@ public class PromptOptimizeService {
                 break; // 只修改最后一条用户消息
             }
         }
+    }
+
+    private void sendToClient(String content, SseEmitter emitter, StringBuilder fullResponse, ObjectMapper objectMapper) throws IOException {
+        fullResponse.append(content);
+        
+        // Wrap content in OpenAI-compatible JSON structure for frontend
+        Map<String, Object> delta = new HashMap<>();
+        delta.put("content", content);
+        
+        Map<String, Object> choiceMap = new HashMap<>();
+        choiceMap.put("delta", delta);
+        
+        List<Map<String, Object>> choices = new ArrayList<>();
+        choices.add(choiceMap);
+        
+        Map<String, Object> chunk = new HashMap<>();
+        chunk.put("choices", choices);
+        
+        emitter.send(SseEmitter.event().data(objectMapper.writeValueAsString(chunk)));
+    }
+
+    private void processContent(String content, StringBuilder contentBuffer, boolean[] isThinking, SseEmitter emitter, StringBuilder fullResponse, ObjectMapper objectMapper) throws IOException {
+        contentBuffer.append(content);
+
+        // Loop to handle multiple tags in one chunk
+        while (true) {
+            if (isThinking[0]) {
+                int endTagIndex = contentBuffer.indexOf("</think>");
+                if (endTagIndex != -1) {
+                    isThinking[0] = false;
+                    contentBuffer.delete(0, endTagIndex + "</think>".length());
+                    // Continue loop to process remaining buffer
+                } else {
+                    // Keep tail for potential split tag
+                    if (contentBuffer.length() > 8) { // </think> is 8 chars
+                        contentBuffer.delete(0, contentBuffer.length() - 8);
+                    }
+                    break;
+                }
+            } else {
+                int startTagIndex = contentBuffer.indexOf("<think>");
+                if (startTagIndex != -1) {
+                    isThinking[0] = true;
+                    String safeContent = contentBuffer.substring(0, startTagIndex);
+                    if (!safeContent.isEmpty()) {
+                        sendToClient(safeContent, emitter, fullResponse, objectMapper);
+                    }
+                    contentBuffer.delete(0, startTagIndex + "<think>".length());
+                    // Continue loop to check for immediate closing tag
+                } else {
+                    // No tag found
+                    if (contentBuffer.length() > 7) { // <think> is 7 chars
+                        String safeContent = contentBuffer.substring(0, contentBuffer.length() - 7);
+                        sendToClient(safeContent, emitter, fullResponse, objectMapper);
+                        contentBuffer.delete(0, contentBuffer.length() - 7);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    private String getFirstSupportedModel(String supportedModels) {
+        if (supportedModels == null || supportedModels.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            if (supportedModels.trim().startsWith("[")) {
+                // JSON 格式
+                JsonNode modelsNode = objectMapper.readTree(supportedModels);
+                if (modelsNode.isArray() && modelsNode.size() > 0) {
+                    JsonNode m = modelsNode.get(0);
+                    if (m.isTextual()) {
+                        return m.asText();
+                    } else if (m.isObject()) {
+                        if (m.has("name")) return m.get("name").asText();
+                        if (m.has("id")) return m.get("id").asText();
+                        if (m.has("value")) return m.get("value").asText();
+                    }
+                }
+            } else {
+                // 旧格式 # 分割
+                String[] models = supportedModels.split("#");
+                if (models.length > 0) {
+                    return models[0].trim();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("解析支持模型失败: {}", supportedModels, e);
+            // 尝试简单分割
+            String[] models = supportedModels.split("#");
+            if (models.length > 0) {
+                return models[0].trim();
+            }
+        }
+        return null;
     }
 }

@@ -290,7 +290,6 @@ public class GenerationController {
      * 发布生成记录
      *
      * @param id 记录ID
-     * @param userId 当前用户ID
      * @return 结果
      */
     @PostMapping("/{id}/publish")

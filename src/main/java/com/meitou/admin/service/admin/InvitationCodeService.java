@@ -259,7 +259,10 @@ public class InvitationCodeService extends ServiceImpl<InvitationCodeMapper, Inv
                         currentStatus = (i == 0) ? "active" : "scheduled";
                     }
                     
-                    createMembershipPeriod(userId, pkg, currentStart, currentEnd, currentStatus, orderNo);
+                    // 为每个周期生成唯一的订单号，防止唯一索引冲突
+                    // 如果有多个周期，追加序号后缀
+                    String periodOrderNo = totalMonths > 1 ? orderNo + "-" + (i + 1) : orderNo;
+                    createMembershipPeriod(userId, pkg, currentStart, currentEnd, currentStatus, periodOrderNo);
                     
                     currentStart = currentEnd;
                 }

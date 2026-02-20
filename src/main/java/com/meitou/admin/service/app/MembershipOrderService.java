@@ -159,6 +159,7 @@ public class MembershipOrderService {
         }
         LocalDateTime now = LocalDateTime.now();
         UserMembershipPeriod active = findActiveMembership(userId, now);
+        UserMembershipPeriod last = findLastMembership(userId);
 
         MembershipStatusResponse response = new MembershipStatusResponse();
         response.setOldUser(isOldUser(userId));
@@ -167,7 +168,13 @@ public class MembershipOrderService {
             response.setActivePackageId(active.getPackageId());
             response.setActiveLevelCode(active.getLevelCode());
             response.setActiveBillingCycle(active.getBillingCycle());
-            response.setActiveEndAt(active.getEndAt());
+            
+            if (last != null && last.getEndAt() != null && last.getEndAt().isAfter(active.getEndAt())) {
+                response.setActiveEndAt(last.getEndAt());
+            } else {
+                response.setActiveEndAt(active.getEndAt());
+            }
+
             response.setCanSwitchType(active.getEndAt() == null || !active.getEndAt().isAfter(now));
 
             MembershipPackage pkg = membershipPackageMapper.selectById(active.getPackageId());
@@ -251,6 +258,7 @@ public class MembershipOrderService {
         int totalMonths = "YEARLY".equals(payload.billingCycle) ? quantity * 12 : quantity;
         
         LocalDateTime currentStart = startAt;
+        int totalPointsGranted = 0;
         
         // 循环创建每个月的周期
         for (int i = 0; i < totalMonths; i++) {
@@ -266,6 +274,10 @@ public class MembershipOrderService {
                 currentStatus = (i == 0) ? "active" : "scheduled";
             }
 
+            // 为每个周期生成唯一的订单号，防止唯一索引冲突
+            // 如果有多个周期，追加序号后缀
+            String periodOrderNo = totalMonths > 1 ? order.getOrderNo() + "-" + (i + 1) : order.getOrderNo();
+
             UserMembershipPeriod period = new UserMembershipPeriod();
             period.setUserId(order.getUserId());
             period.setPackageId(payload.packageId);
@@ -274,7 +286,7 @@ public class MembershipOrderService {
             period.setStartAt(currentStart);
             period.setEndAt(currentEnd);
             period.setStatus(currentStatus);
-            period.setOrderNo(order.getOrderNo());
+            period.setOrderNo(periodOrderNo);
             period.setSiteId(SiteContext.getSiteId());
             period.setCreatedAt(now);
             period.setUpdatedAt(now);
@@ -286,13 +298,22 @@ public class MembershipOrderService {
                 Integer reward = pkg.getPointsReward();
                 if (reward != null && reward > 0) {
                     // 注意：这里不需要乘以 quantity，因为是按月发放
-                    pointsLedgerService.grantExpiringPoints(order.getUserId(), reward, "MEMBERSHIP", order.getOrderNo(), currentEnd,
+                    pointsLedgerService.grantExpiringPoints(order.getUserId(), reward, "MEMBERSHIP", periodOrderNo, currentEnd,
                             "会员赠送算力-" + pkg.getLevelCode(), period.getId());
+                    totalPointsGranted += reward;
                 }
             }
             
             // 下一个周期的开始时间 = 当前周期的结束时间
             currentStart = currentEnd;
+        }
+
+        // 更新订单显示的获得积分（仅包含立即到账的积分）
+        // 即使是0也更新吗？不，如果是0，原来就是0。但为了准确性，如果有变更才更新。
+        // 如果是续费，totalPointsGranted=0，order.points=0，不需要更新。
+        if (totalPointsGranted > 0) {
+            order.setPoints(totalPointsGranted);
+            rechargeOrderMapper.updateById(order);
         }
     }
 
